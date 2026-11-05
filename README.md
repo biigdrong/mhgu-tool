@@ -83,8 +83,17 @@ mhgu-tool/
   tools/hactool.exe XCI、NCA、RomFS 解析（SciresM/hactool 1.4.0）
   ui/index.html     单页界面
   启动.cmd          Windows 启动器（自动找 Python）
+  app/              手机端管家 APK 的源码（可选，独立于 PC 工具）
   data/             配置、缓存、下载、工作目录（运行时生成）
 ```
+
+## 手机端管家（app/）
+
+`app/` 里是一个 40 KB 的 Android WebView 壳，装到手机上用来**看两个分支的版本与中文更新说明、
+一键下载 APK、体检游戏文件夹是否齐**。它不含游戏数据，也不玩游戏。
+
+构建同样不需要 Gradle，见 [`app/README.md`](app/README.md)。那里还记了一个绕不开的坑：
+**build-tools r34 的 d8 处理非静态内部类会崩**，所有嵌套类必须写成 `static`。
 
 ## 合法性与致谢
 

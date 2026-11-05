@@ -1,12 +1,12 @@
-# 运行时生成
-data/
-runtime/
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-.venv/
+# 手机端构建产物与签名
+app/build/
+app/dist/
+build/
+dist/
+*.jks
+pass.txt
+
 venv/
 
 # 本机凭据，永不提交

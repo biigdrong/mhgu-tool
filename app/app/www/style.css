@@ -1,0 +1,65 @@
+:root{
+  --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+  --text:#e6e9ef; --dim:#9aa3b2; --accent:#c8a24a; --accent2:#e0bb63;
+  --ok:#4ea87a; --bad:#cf5c5c; --warn:#d69b45;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);overflow-x:hidden;
+  font:15px/1.65 -apple-system,"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif}
+body{padding:0 0 40px}
+.hd{padding:20px 18px 12px;border-bottom:1px solid var(--line)}
+.hd h1{font-size:19px;margin:0 0 4px;font-weight:600;letter-spacing:.4px}
+.hd .sub{color:var(--dim);font-size:12.5px}
+.hd .dev{color:#5f6877;font-size:11.5px;margin-top:6px}
+
+.tabs{display:flex;gap:8px;padding:14px 18px 0}
+.tab{flex:1;text-align:center;padding:9px 6px;border-radius:8px;border:1px solid var(--line);
+  background:var(--panel);color:var(--dim);font-size:13.5px;cursor:pointer;transition:.15s}
+.tab.on{background:#1b1a15;border-color:var(--accent);color:var(--accent2);font-weight:600}
+
+.card{margin:14px 18px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card.hide{display:none}
+.title{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.title b{font-size:16px;font-weight:600}
+.badge{font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}
+.badge.ok{border-color:var(--ok);color:var(--ok)}
+.badge.bad{border-color:var(--bad);color:var(--bad)}
+.badge.warn{border-color:var(--warn);color:var(--warn)}
+.desc{color:var(--dim);font-size:13px;margin:2px 0 12px}
+
+.kv{display:flex;justify-content:space-between;gap:12px;padding:7px 0;
+  border-bottom:1px dashed #232833;font-size:13.5px}
+.kv:last-child{border-bottom:none}
+.kv span:first-child{color:var(--dim);flex:0 0 auto}
+.kv span:last-child{flex:1 1 auto;min-width:0;text-align:right;word-break:break-all;overflow-wrap:anywhere}
+
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+button{flex:1;min-width:104px;padding:11px 12px;border-radius:9px;border:1px solid var(--line);
+  background:var(--panel2);color:var(--text);font:inherit;font-size:14px;cursor:pointer;transition:.15s}
+button:active{transform:scale(.985)}
+button.pri{background:var(--accent);border-color:var(--accent);color:#1a1508;font-weight:600}
+button.ghost{flex:0 0 auto;min-width:0;padding:9px 14px;font-size:13px;color:var(--dim)}
+button:disabled{opacity:.45}
+
+.notes{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
+.notes summary{cursor:pointer;color:var(--accent2);font-size:13.5px;outline:none}
+.notes .body{font-size:13px;color:#b9c2d0;margin-top:8px;white-space:pre-wrap;word-break:break-word}
+.notes .zh{background:#14171d;border-left:2px solid var(--accent);padding:8px 10px;border-radius:0 6px 6px 0;
+  margin-bottom:8px;font-size:13px;color:#cdd4de}
+
+.warnbox{margin:14px 18px;padding:12px 14px;border-radius:10px;background:#231a12;
+  border:1px solid #4a3620;color:#e0b98a;font-size:12.5px;line-height:1.7}
+.warnbox b{color:#f0c88a}
+
+.hint{color:var(--dim);font-size:12px;margin-top:8px;line-height:1.6}
+code{background:#0b0d11;border:1px solid var(--line);border-radius:4px;padding:1px 5px;
+  font:12px/1.5 "Cascadia Mono",Consolas,monospace;color:#b9c2d0}
+pre{background:#0b0d11;border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;
+  font:11.5px/1.55 "Cascadia Mono",Consolas,monospace;color:#b9c2d0;white-space:pre-wrap;word-break:break-all}
+
+.spin{display:inline-block;width:12px;height:12px;border:2px solid #3a4152;border-top-color:var(--accent);
+  border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+.foot{color:#4e5666;font-size:11.5px;text-align:center;margin:24px 18px 0;line-height:1.8}
+.foot a{color:#6b7688;text-decoration:none}
