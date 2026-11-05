@@ -53,12 +53,32 @@ Java 侧通过 `App` 对象暴露能力，JS 侧用 `window.__onRelease` / `wind
 
 ## 关于「手机本地编译 so」
 
-界面里提供了入口，但**这条路没有在真机上跑通过**，原因写在页面提示里：
+上游 `build_game.py` 只认 Windows / Linux 的 **x86_64** 宿主：Android 上 `platform.system()`
+返回 `Linux`，它会去 `prebuilt/linux-x86_64/bin` 找 clang，而那里面全是 x86 ELF，执行即
+`cannot execute`。NDK 本身也不提供 android-aarch64 宿主工具链（只有 windows-x86_64 /
+linux-x86_64 / darwin-x86_64 / darwin-arm64）。
 
-- `gu-native` 的 `build_game.py` 把主机平台写死成 `windows-x86_64` / `linux-x86_64`，
-  Android 上拿不到对应的 NDK 主机工具链；
-- 手机本地只能走 Termux 的 clang + Python 手动拼编译命令，官方参数见 `build_game.py` 的
-  `CFLAGS` 与链接段；
-- 实测成本：PC 上 6 分钟，手机通常 40–70 分钟，峰值约需 3 GB 空间。
+但 aarch64 宿主的编译器是存在的：**Termux 的 clang**（LLVM 原生 aarch64，target 默认
+`aarch64-linux-android`），以及 `lzhiyong/termux-ndk`（整套 NDK 的 aarch64 重建版）。
 
-所以页面把它标成「实验性」，并建议有电脑的人用 [mhgu-tool](../README.md) 编一次再把 so 拷过来。
+因此本工程提供 **`tools/build_android.py`**：与上游做同一件事，只换工具链。
+`ID_FILES` / `ID_FLAGS` / `CFLAGS` 与链接参数全部照抄上游，保证 `gamelib_id()`
+算出的 id 与 app 期望的一致——否则 app 会以 `libmhgugame.so is from another version` 拒绝加载。
+
+```bash
+# Termux 里
+pkg install -y python clang lz4 unzip
+git clone https://github.com/khorne-hub/gu-native   # 或下 zip
+curl -sL https://raw.githubusercontent.com/biigdrong/mhgu-tool/main/app/tools/build_android.py \
+     -o ~/gu-native/tools/build_android.py
+python ~/gu-native/tools/build_android.py /sdcard/MHGU --jobs 6
+```
+
+app 里的「交给 Termux 编译」就是把上面这段通过 `RunCommandService` 送过去，依赖会自己装。
+
+**状态说明**：脚本逻辑与上游逐项对齐，但**尚未在真机上完整跑通一次**（手机当时离线）。
+第一次用请留观，尤其是 `gen.py` 阶段的耗时与内存峰值；失败时把 Termux 的输出发出来。
+有电脑的话仍建议走 `mhgu-tool`，那边路径更短、参数已实测。
+
+实测成本参考：PC 6 分钟；手机预计 40–70 分钟，峰值约 3 GB 空间。
+

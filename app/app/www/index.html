@@ -61,8 +61,8 @@
 
 <!-- ==================== so 编译 ==================== -->
 <div class="card hide" id="cardBuild">
-  <div class="title"><b>游戏代码（so）</b><span class="badge warn">实验性</span></div>
-  <div class="desc">触屏版的 so 必须用你自己的游戏文件生成，不能用别人的。同一版本可一直复用，只有 gu-native 版本更新时才需要重做。</div>
+  <div class="title"><b>游戏代码（so）</b><span class="badge warn">手机上编译</span></div>
+  <div class="desc">触屏版的 so 必须用你自己的游戏文件生成，不能用别人的。同一版本可一直复用，只有 gu-native 换版本时才需要重做。</div>
   <div class="kv"><span>so 状态</span><span id="bSo">—</span></div>
   <div class="kv"><span>Termux</span><span id="bTermux">—</span></div>
   <div class="btns">
@@ -70,17 +70,19 @@
     <button class="ghost" onclick="copyScript()">复制脚本</button>
   </div>
   <div class="hint">
-    <b style="color:#d69b45">先说清代价：</b>手机编译要把 exefs 翻成 C 再用 clang 编译，实测在 PC 上是 6 分钟，
-    手机上通常 40–70 分钟，峰值需要约 3 GB 空闲空间，且会明显发热。编译期间别锁屏。
-    如果你有电脑，用 <code>mhgu-tool</code> 编一次再把 so 拷过来更快也更稳。
+    <b style="color:#d69b45">先说清代价：</b>手机编译要把 exefs 翻成 C 再用 clang 编译，PC 上是 6 分钟，
+    手机上通常 40–70 分钟，峰值约需 3 GB 空间，会明显发热。脚本已加 <code>termux-wake-lock</code>，
+    编译期间别锁屏。<br>
+    如果你有电脑，用 <code>mhgu-tool</code> 编一次再把 so 拷过来更快：那边用 NDK 的 x86_64 宿主工具链，
+    手机这边用 Termux 的 aarch64 宿主 clang，两条路产出的 so 等价。
   </div>
   <details style="margin-top:12px">
     <summary style="cursor:pointer;color:#e0bb63;font-size:13.5px">Termux 准备步骤（点开）</summary>
     <div class="hint" style="margin-top:8px">
       1. 装 Termux（F-Droid 版，不要用 Play 商店的旧版）<br>
-      2. Termux 里执行 <code>pkg install -y python clang lz4</code><br>
-      3. 新建 <code>~/.termux/termux.properties</code>，写入 <code>allow-external-apps=true</code>，然后执行 <code>termux-reload-settings</code><br>
-      4. 回到这里点「交给 Termux 编译」
+      2. 新建 <code>~/.termux/termux.properties</code>，写入 <code>allow-external-apps=true</code>，再执行 <code>termux-reload-settings</code><br>
+      3. 回到这里点「交给 Termux 编译」，依赖（python / clang / lz4 / unzip）脚本会自己装<br>
+      4. 编译产物直接写到 <code>/sdcard/MHGU</code>，回来刷新即可看到
     </div>
   </details>
   <pre id="scriptBox" style="display:none;margin-top:10px"></pre>
@@ -229,17 +231,18 @@ function buildScript(){
   return [
     "set -e",
     "echo '== MHGU so 编译开始 =='",
-    "command -v clang >/dev/null 2>&1 || pkg install -y clang python lz4",
-    "python -c 'import lz4' 2>/dev/null || pip install lz4",
-    "[ -d ~/gu-native ] || (cd ~ && curl -sLO https://github.com/khorne-hub/gu-native/archive/refs/heads/main.zip && unzip -oq main.zip && mv gu-native-main gu-native && rm -f main.zip)",
+    "pkg install -y python clang lz4 unzip",
+    "termux-wake-lock",
+    "python -c 'import lz4' 2>/dev/null || pip install --quiet lz4",
+    "if [ ! -d ~/gu-native ]; then",
+    "  cd ~ && curl -sLO https://github.com/khorne-hub/gu-native/archive/refs/heads/main.zip",
+    "  unzip -oq main.zip && mv gu-native-main gu-native && rm -f main.zip",
+    "fi",
+    "curl -sL https://raw.githubusercontent.com/biigdrong/mhgu-tool/main/app/tools/build_android.py -o ~/gu-native/tools/build_android.py",
     "cd ~/gu-native",
-    "echo '阶段 1/2：把 ARM 代码翻成 C（最慢，耐心等）'",
-    "python tools/gen.py sdk /sdcard/MHGU/exefs/sdk 0x02400000 /sdcard/MHGU/_gen/sdk --hle runtime/hle/hle_symbols.txt",
-    "python tools/gen.py main /sdcard/MHGU/exefs/main 0x00200000 /sdcard/MHGU/_gen/main",
-    "echo '阶段 2/2：clang 编译（同样很久）'",
-    "echo '提示：官方 build_game.py 只认 x86_64 主机，所以这里用 Termux 自带 clang 手工编译'",
-    "echo '如需完整参数与链接步骤，见 https://github.com/biigdrong/mhgu-tool 的 README'",
-    "echo '== 生成到 /sdcard/MHGU/_gen，若你不想手工完成剩余编译，请在 PC 上用 mhgu-tool 走一遍 =='"
+    "python tools/build_android.py /sdcard/MHGU --jobs 6",
+    "termux-wake-unlock",
+    "echo '== 完成，回到管家刷新 so 状态 =='"
   ].join("\n");
 }
 
