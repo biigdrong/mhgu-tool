@@ -1,0 +1,18 @@
+# 运行时生成
+data/
+runtime/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 本机凭据，永不提交
+.ghauth
+
+# 系统
+Thumbs.db
+desktop.ini
+.DS_Store

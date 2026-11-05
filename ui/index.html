@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>MHGU 装机助手</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+    --text:#e6e9ef; --dim:#9aa3b2; --accent:#c8a24a; --accent2:#e0bb63;
+    --ok:#4ea87a; --bad:#cf5c5c; --warn:#d69b45;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 20px 60px}
+  h1{font-size:20px;margin:0 0 4px;font-weight:600;letter-spacing:.5px}
+  h1 small{color:var(--dim);font-weight:400;font-size:12px;margin-left:8px}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:22px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .branch{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+          padding:14px 16px;cursor:pointer;transition:.15s;position:relative}
+  .branch:hover{border-color:#3b4250}
+  .branch.on{border-color:var(--accent);background:#1b1a15;box-shadow:0 0 0 1px var(--accent) inset}
+  .branch .t{font-weight:600;margin-bottom:4px}
+  .branch .d{color:var(--dim);font-size:12.5px}
+  .branch .tag{position:absolute;right:12px;top:12px;font-size:11px;padding:2px 7px;
+               border-radius:99px;border:1px solid var(--line);color:var(--dim)}
+  .branch.on .tag{border-color:var(--accent);color:var(--accent)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+  .card h2{font-size:13px;font-weight:600;margin:0 0 12px;color:var(--dim);
+           text-transform:uppercase;letter-spacing:1px}
+  .row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+  .row label{width:96px;flex:none;color:var(--dim);font-size:12.5px}
+  input[type=text],input[type=number],select{
+    flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line);
+    color:var(--text);padding:7px 10px;border-radius:6px;font:inherit;font-size:13px}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  button{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+         padding:7px 14px;border-radius:6px;cursor:pointer;font:inherit;font-size:13px;transition:.15s}
+  button:hover{border-color:#3b4250;background:#242935}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#1a1508;font-weight:600}
+  button.primary:hover{background:var(--accent2)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 18px}
+  .actions button{padding:11px 22px;font-size:14px}
+  .prog{height:6px;background:var(--panel2);border-radius:99px;overflow:hidden;margin:10px 0 8px}
+  .prog i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));
+          transition:width .3s}
+  .step{font-size:13px;color:var(--text);margin-bottom:2px}
+  .msg{font-size:12px;color:var(--dim)}
+  pre#log{background:#0b0d11;border:1px solid var(--line);border-radius:8px;padding:12px;
+          height:300px;overflow:auto;font:12px/1.55 "Cascadia Mono",Consolas,monospace;
+          color:#b9c2d0;margin:0;white-space:pre-wrap;word-break:break-all}
+  .hint{font-size:12px;color:var(--dim);margin-top:8px}
+  .pill{display:inline-block;font-size:11.5px;padding:2px 8px;border-radius:99px;
+        border:1px solid var(--line);color:var(--dim);margin-right:6px}
+  .pill.ok{border-color:var(--ok);color:var(--ok)}
+  .pill.bad{border-color:var(--bad);color:var(--bad)}
+  .foot{color:#5f6877;font-size:11.5px;margin-top:26px;line-height:1.8}
+  .foot a{color:#7f8b9d}
+  .note{font-size:12.5px;color:var(--warn);margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MHGU 装机助手 <small id="ver"></small></h1>
+  <div class="sub">把「解包 → 校验 1.4.0 → 合并官方中文资源 → 生成游戏代码 → 装 APK → 推手机」收进一个界面。只动本机文件，不上传任何东西。</div>
+
+  <div class="grid" id="branches"></div>
+
+  <div class="card">
+    <h2>游戏文件</h2>
+    <div class="row">
+      <label>XCI / NSP</label>
+      <input type="text" id="xci_path" placeholder="直接从游戏包里解（需要 prod.keys）">
+      <button onclick="pick('file','xci_path')">浏览</button>
+    </div>
+    <div class="row">
+      <label>或已解包目录</label>
+      <input type="text" id="game_dir" placeholder="含 exefs 与 romfs 的文件夹，可跳过解包">
+      <button onclick="pick('dir','game_dir')">浏览</button>
+    </div>
+    <div class="row">
+      <label>prod.keys</label>
+      <input type="text" id="keys_path" placeholder="解包 XCI 时需要">
+      <button onclick="pick('file','keys_path')">浏览</button>
+    </div>
+    <div class="row">
+      <label>输出目录</label>
+      <input type="text" id="out_dir">
+      <button onclick="pick('dir','out_dir')">浏览</button>
+    </div>
+    <div class="hint" id="detectHint">点「自动探测」会在常见位置找游戏包、key 与 adb。</div>
+    <div style="margin-top:10px"><button onclick="doDetect()">自动探测</button></div>
+  </div>
+
+  <div class="card">
+    <h2>手机</h2>
+    <div class="row">
+      <label>无线调试地址</label>
+      <input type="text" id="adb_addr" placeholder="留空则自动扫端口（手机需已开无线调试）">
+      <button onclick="connectAdb()">连接 / 扫描</button>
+    </div>
+    <div class="row">
+      <label>手机 IP</label>
+      <input type="text" id="adb_wifi_ip" placeholder="192.168.5.12">
+      <label style="width:auto;margin-left:8px">adb</label>
+      <input type="text" id="adb_path" placeholder="留空自动找">
+    </div>
+    <div class="row">
+      <label>编译线程</label>
+      <input type="number" id="jobs" min="1" max="64" style="max-width:110px">
+      <span class="hint" style="margin:0 0 0 4px">触屏分支编译用</span>
+    </div>
+    <div id="adbState" class="hint"></div>
+  </div>
+
+  <div class="actions">
+    <button class="primary" id="btnDeploy" onclick="start('deploy')">一键部署</button>
+    <button id="btnUnpack" onclick="start('unpack')">仅解包</button>
+    <button id="btnBuild" onclick="start('build')">仅生成游戏代码</button>
+    <button id="btnCancel" onclick="cancelTask()" disabled>取消</button>
+  </div>
+
+  <div class="card" id="progressCard" style="display:none">
+    <h2>进度</h2>
+    <div class="step" id="step">等待开始</div>
+    <div class="prog"><i id="bar"></i></div>
+    <div class="msg" id="msg"></div>
+    <pre id="log"></pre>
+  </div>
+
+  <div class="foot">
+    官方版 <a href="https://github.com/morerokk/MHGURecomp" target="_blank">morerokk/MHGURecomp</a> ·
+    触屏版 <a href="https://github.com/khorne-hub/gu-native" target="_blank">khorne-hub/gu-native</a> ·
+    hactool by SciresM<br>
+    本工具不含任何游戏文件、密钥或游戏代码，需要你自己的 1.4.0 游戏副本。装好后<b>切勿卸载 app</b>——卸载会连游戏文件一起删掉。
+  </div>
+</div>
+
+<script>
+let CFG = {}, BRANCHES = {}, taskId = null, cursor = 0, timer = null;
+
+const $ = id => document.getElementById(id);
+const FIELDS = ["branch","xci_path","game_dir","keys_path","out_dir","adb_addr","adb_wifi_ip","adb_path","jobs","ndk_path"];
+
+async function api(path, opt) {
+  const r = await fetch(path, opt);
+  return r.json();
+}
+
+async function boot() {
+  const d = await api("/api/config");
+  CFG = d.config || {};
+  BRANCHES = d.branches || {};
+  $("ver").textContent = "v" + (d.version || "");
+  renderBranches();
+  for (const f of FIELDS) {
+    const el = $(f);
+    if (el && CFG[f] !== undefined && CFG[f] !== null) el.value = CFG[f];
+  }
+  try {
+    const rel = await api("/api/release?branch=" + (CFG.branch || "touch"));
+    if (rel.ok && rel.asset) {
+      $("detectHint").innerHTML =
+        `最新 <b>${rel.tag}</b> · ${rel.asset.name} · ${(rel.asset.size/1048576).toFixed(1)} MB`;
+    }
+  } catch(e) {}
+}
+
+function renderBranches() {
+  const box = $("branches");
+  box.innerHTML = "";
+  for (const k in BRANCHES) {
+    const b = BRANCHES[k];
+    const el = document.createElement("div");
+    el.className = "branch" + ((CFG.branch === k) ? " on" : "");
+    el.innerHTML = `<div class="tag">${b.needs_build ? "需编译" : "开箱即用"}</div>
+      <div class="t">${b.branch_name}</div>
+      <div class="d">${b.apk_hint}<br>${b.device_note}</div>`;
+    el.onclick = () => { CFG.branch = k; $("branch").value = k; renderBranches(); syncButtons(); save(); };
+    box.appendChild(el);
+  }
+  syncButtons();
+}
+
+function syncButtons() {
+  const b = BRANCHES[CFG.branch] || {};
+  $("btnBuild").disabled = !b.needs_build;
+  $("btnBuild").style.opacity = b.needs_build ? 1 : .4;
+}
+
+function collect() {
+  const o = {};
+  for (const f of FIELDS) { const el = $(f); if (el) o[f] = (f === "jobs") ? +el.value : el.value; }
+  return o;
+}
+
+async function save() {
+  CFG = Object.assign(CFG, collect());
+  await api("/api/config", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(CFG)});
+}
+
+async function pick(kind, field) {
+  const r = await api("/api/browse", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({kind, initial: $(field).value || ""})});
+  if (r.ok && r.path) { $(field).value = r.path; save(); }
+  else if (r.error) alert(r.error);
+}
+
+async function doDetect() {
+  $("detectHint").textContent = "扫描中…";
+  const d = await api("/api/detect");
+  if (d.xci && d.xci.length && !$("xci_path").value) $("xci_path").value = d.xci[0];
+  if (d.game_dir && d.game_dir.length && !$("game_dir").value) $("game_dir").value = d.game_dir[0];
+  if (d.keys && d.keys.length && !$("keys_path").value) $("keys_path").value = d.keys[0];
+  if (d.adb && !$("adb_path").value) $("adb_path").value = d.adb;
+  $("detectHint").innerHTML =
+    `找到 ${d.xci.length} 个游戏包 · ${d.game_dir.length} 个已解包目录 · ${d.keys.length} 个 keys` +
+    (d.adb ? ` · adb 已定位` : ` · <span style="color:var(--bad)">未找到 adb</span>`);
+  save();
+}
+
+async function start(kind) {
+  await save();
+  $("progressCard").style.display = "block";
+  $("log").textContent = ""; cursor = 0;
+  const r = await api("/api/start", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({kind, config: CFG})});
+  if (!r.ok) { alert(r.error || "启动失败"); return; }
+  taskId = r.task.id;
+  $("btnCancel").disabled = false;
+  setBusy(true);
+  poll();
+  timer = setInterval(poll, 900);
+}
+
+async function poll() {
+  if (!taskId) return;
+  const s = await api(`/api/task?id=${encodeURIComponent(taskId)}&since=${cursor}`);
+  if (s.error) return;
+  cursor = s.cursor;
+  $("step").textContent = s.step || s.title;
+  $("bar").style.width = Math.max(0, Math.min(1, s.progress)) * 100 + "%";
+  $("msg").textContent = (s.message || "") + (s.elapsed ? `  ·  ${s.elapsed}s` : "");
+  if (s.lines && s.lines.length) {
+    const log = $("log");
+    const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
+    log.textContent += (log.textContent ? "\n" : "") + s.lines.join("\n");
+    if (atBottom) log.scrollTop = log.scrollHeight;
+  }
+  if (s.status !== "running") {
+    clearInterval(timer); timer = null;
+    $("btnCancel").disabled = true;
+    setBusy(false);
+    $("step").textContent = s.status === "done" ? "完成" : (s.status === "cancelled" ? "已取消" : "失败：" + (s.error||""));
+    if (s.status === "done") $("bar").style.width = "100%";
+    if (s.result && s.result.device) {
+      $("adbState").innerHTML = `<span class="pill ok">已推送</span> ${s.result.device.path} · ${s.result.device.stat}`;
+    }
+  }
+}
+
+async function cancelTask() {
+  if (!taskId) return;
+  await api("/api/cancel", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({id: taskId})});
+}
+
+function setBusy(b) {
+  for (const id of ["btnDeploy","btnUnpack","btnBuild"]) $(id).disabled = b;
+  if (!b) syncButtons();
+}
+
+async function connectAdb() {
+  await save();
+  $("adbState").textContent = "连接中…";
+  const r = await api("/api/adb/connect", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({addr: $("adb_addr").value, ip: $("adb_wifi_ip").value})});
+  if (!r.ok) { $("adbState").textContent = r.error; return; }
+  taskId = r.task.id; cursor = 0;
+  $("progressCard").style.display = "block";
+  $("log").textContent = ""; $("step").textContent = "连接手机";
+  poll(); timer = setInterval(poll, 700);
+}
+
+boot();
+</script>
+</body>
+</html>
