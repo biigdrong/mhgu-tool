@@ -118,6 +118,33 @@ def find_tool(name):
     return None
 
 
+def prune_cache(cache_dir, keep=1000 * 1024 * 1024, limit=1200 * 1024 * 1024):
+    """缓存超过上限时按最旧优先删，避免无限增长"""
+    try:
+        entries = []
+        total = 0
+        for n in os.listdir(cache_dir):
+            if not n.endswith(".o"):
+                continue
+            p = os.path.join(cache_dir, n)
+            st = os.stat(p)
+            entries.append((st.st_mtime, st.st_size, p))
+            total += st.st_size
+        if total <= limit:
+            return
+        entries.sort()
+        for _m, sz, p in entries:
+            if total <= keep:
+                break
+            try:
+                os.remove(p)
+                total -= sz
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
 def run(cmd, cwd=None):
     r = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        text=True, errors="replace")
@@ -131,6 +158,10 @@ def main():
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--api", type=int, default=29)
     ap.add_argument("--force", action="store_true", help="已有同版本 so 也重建")
+    ap.add_argument("--clang", help="内置工具链：clang 可执行文件路径")
+    ap.add_argument("--lld", help="内置工具链：ld.lld 路径")
+    ap.add_argument("--sysroot", help="内置工具链：sysroot 目录")
+    ap.add_argument("--resource-dir", help="内置工具链：clang 资源目录")
     a = ap.parse_args()
 
     game = os.path.abspath(a.game)
@@ -142,9 +173,9 @@ def main():
     if machine not in ("aarch64", "arm64"):
         say("警告：宿主不是 aarch64，本脚本按 Android ARM64 目标编译，仍可继续。")
 
-    clang = find_tool("clang")
-    if not clang:
-        fail("找不到 clang。在 Termux 里先执行：pkg install -y clang python lz4")
+    clang = a.clang or find_tool("clang")
+    if not clang or not os.path.isfile(clang):
+        fail("找不到 clang。请用 --clang 指定，或在 Termux 里 pkg install clang")
     say("clang: " + clang)
     code, out = run([clang, "--version"])
     say(out.splitlines()[0] if out else "")
@@ -152,6 +183,8 @@ def main():
     try:
         import lz4.block  # noqa: F401
     except ImportError:
+        if a.clang:
+            fail("内置环境缺 lz4 模块")
         say("安装 lz4 模块…")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "lz4"])
 
@@ -190,9 +223,11 @@ def main():
     t0 = time.time()
     work = tempfile.mkdtemp(prefix="mhgu_", dir=os.path.expanduser("~"))
     say("工作目录: " + work)
+    import atexit
+    atexit.register(shutil.rmtree, work, True)  # 失败或中断也清掉，避免几百 MB 累加
 
     # ---------- 1/3 翻译
-    say("\n阶段 1/3：把 ARM 代码翻成 C（这一步最慢，纯 Python）")
+    say("\n阶段 1/3：把 ARM 代码翻成 C（纯 Python；sdk 与 main 并行，省约 1 分钟）")
     gen = os.path.join(work, "gen")
     hle = os.path.join(root, "runtime", "hle", "hle_symbols.txt")
     steps = [
@@ -201,11 +236,20 @@ def main():
         [sys.executable, "gen.py", "main", os.path.join(game, "exefs", "main"), "0x00200000",
          os.path.join(gen, "main")],
     ]
-    for cmd in steps:
+
+    def do_gen(cmd):
         code, out = run(cmd, cwd=os.path.join(root, "tools"))
         if code:
-            fail("翻译失败：\n" + out[-2000:])
-        say("  " + os.path.basename(cmd[2] if cmd[1] == "gen.py" else cmd[0]) + " 完成")
+            raise RuntimeError("翻译 %s 失败：\n%s" % (cmd[2], out[-2000:]))
+        say("  %s 完成" % cmd[2])
+        return True
+
+    from concurrent.futures import ThreadPoolExecutor
+    try:
+        with ThreadPoolExecutor(2) as pool:
+            list(pool.map(do_gen, steps))
+    except RuntimeError as e:
+        fail(str(e))
 
     sources = []
     for sub in ("main", "sdk"):
@@ -223,19 +267,78 @@ def main():
     objdir = os.path.join(work, "obj")
     os.makedirs(objdir)
     target = "--target=aarch64-linux-android%d" % a.api
+    toolflags = []
+    if a.sysroot:
+        toolflags.append("--sysroot=" + a.sysroot)
+    if a.resource_dir:
+        toolflags.append("-resource-dir=" + a.resource_dir)
+    if a.lld:
+        toolflags.append("--ld-path=" + a.lld)
     done = [0]
+    hits = [0]
+    import threading
+    lock = threading.Lock()
+
+    # 对象缓存：文件内容 + 编译参数决定键（gid 只并进真正引用它的文件），
+    # 上游只改少数文件时其余 .o 直接复用，不必全量重编。
+    cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "mhgu_obj")
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except OSError:
+        cache_dir = ""
+    inc_runtime = "-I" + os.path.join(root, "runtime")
+    base_flags = " ".join([target] + toolflags + list(cflags) + [inc_runtime])
+    _c, _v = run([clang, "--version"])
+    clang_ver = (_v.splitlines()[0] if _v else "") + "|" + str(a.api)
+
+    def obj_key(data):
+        h = hashlib.sha256()
+        h.update(data)
+        h.update(base_flags.encode("utf-8", "replace"))
+        if b"GAMELIB_ID" in data:
+            h.update(('-DGAMELIB_ID="%s"' % gid).encode())
+        h.update(clang_ver.encode())
+        return h.hexdigest()
+
+    def note(n):
+        if n % 20 == 0 or n == len(sources):
+            say("  %d / %d（复用 %d）" % (n, len(sources), hits[0]))
 
     def build(item):
         i, src = item
         obj = os.path.join(objdir, "%d.o" % i)
-        cmd = [clang, target] + cflags + ["-I" + os.path.join(root, "runtime"),
-                                         '-DGAMELIB_ID="%s"' % gid, "-c", src, "-o", obj]
+        with open(src, "rb") as f:
+            data = f.read()
+        cached = ""
+        if cache_dir:
+            cached = os.path.join(cache_dir, obj_key(data) + ".o")
+            if os.path.isfile(cached):
+                try:
+                    shutil.copyfile(cached, obj)
+                    with lock:
+                        done[0] += 1
+                        hits[0] += 1
+                        n = done[0]
+                    note(n)
+                    return obj
+                except OSError:
+                    pass
+        cmd = [clang, target] + toolflags + list(cflags) + [inc_runtime,
+                       '-DGAMELIB_ID="%s"' % gid, "-c", src, "-o", obj]
         code, out = run(cmd)
         if code:
-            raise RuntimeError("%s:\n%s" % (src, out[-1500:]))
-        done[0] += 1
-        if done[0] % 20 == 0 or done[0] == len(sources):
-            say("  %d / %d" % (done[0], len(sources)))
+            raise RuntimeError("%s://n%s" % (src, out[-1500:]))
+        if cached:
+            try:
+                tmp = "%s.%d.tmp" % (cached, threading.get_ident())
+                shutil.copyfile(obj, tmp)
+                os.replace(tmp, cached)
+            except OSError:
+                pass
+        with lock:
+            done[0] += 1
+            n = done[0]
+        note(n)
         return obj
 
     from concurrent.futures import ThreadPoolExecutor
@@ -250,7 +353,7 @@ def main():
     stub_c = os.path.join(work, "stub.c")
     open(stub_c, "w").close()
     stub = os.path.join(work, "libmain.so")
-    code, out = run([clang, target, "-shared", "-Wl,-soname,libmain.so", stub_c, "-o", stub])
+    code, out = run([clang, target] + toolflags + ["-shared", "-Wl,-soname,libmain.so", stub_c, "-o", stub])
     if code:
         fail("stub 链接失败：\n" + out[-1500:])
 
@@ -258,7 +361,7 @@ def main():
     with open(rsp, "w") as f:
         f.write("\n".join('"%s"' % o for o in objs))
     lib = os.path.join(work, "libmhgugame.so")
-    code, out = run([clang, target, "-shared", "-fPIC", "-Wl,-soname,libmhgugame.so",
+    code, out = run([clang, target] + toolflags + ["-shared", "-fPIC", "-Wl,-soname,libmhgugame.so",
                      "-Wl,--build-id=sha1", "-Wl,--no-rosegment", "-Wl,--gc-sections",
                      "-Wl,-z,max-page-size=16384", "-Wl,--allow-shlib-undefined",
                      "-o", lib, "@" + rsp, "-L" + work, "-lmain", "-latomic", "-lm"])
@@ -279,7 +382,10 @@ def main():
     say("\n完成，用时 %.0f 分钟" % ((time.time() - t0) / 60))
     say("  %s  (%d MB)" % (dst_so, size))
     say("  %s  (%s)" % (dst_id, gid))
-    say("\n现在打开 MHGU（触屏版），它应该在 /sdcard/MHGU 里找到这两个文件。")
+    say("\n产物已写入游戏文件夹，打开触屏版即可。")
+    if cache_dir:
+        say("复用对象：%d / %d" % (hits[0], len(sources)))
+        prune_cache(cache_dir)
     shutil.rmtree(work, ignore_errors=True)
 
 

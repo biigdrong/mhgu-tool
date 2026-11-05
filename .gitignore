@@ -1,9 +1,9 @@
 
-# 手机端构建产物与签名
+# 工具链载荷与构建中间物
+app/payload/
 app/build/
 app/dist/
-build/
-dist/
+/
 *.jks
 pass.txt
 

@@ -60,6 +60,10 @@ public class MainActivity extends Activity {
 
     private static final int REQ_TREE = 1001;
     private static final int REQ_ALLFILES = 1002;
+    private static final int REQ_RUNCMD = 1003;
+    /** Termux 的自定义危险权限，不在 android.Manifest.permission 里 */
+    static final String PERM_RUN_COMMAND = "com.termux.permission.RUN_COMMAND";
+    private String pendingDir;
 
     private WebView web;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -256,6 +260,33 @@ public class MainActivity extends Activity {
         return Build.VERSION.SDK_INT < 30 || Environment.isExternalStorageManager();
     }
 
+    /** Termux 的 RunCommandService 受 dangerous 权限保护，必须先拿到授权才能下发命令 */
+    boolean hasRunCmd() {
+        try {
+            return checkSelfPermission(PERM_RUN_COMMAND) == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        if (req == REQ_RUNCMD) {
+            if (res.length > 0 && res[0] == 0) {
+                toastNow("已授权，继续编译");
+                if (pendingDir != null) {
+                    final String d = pendingDir;
+                    pendingDir = null;
+                    new Thread(new PrepJob(this, d)).start();
+                }
+            } else {
+                toastNow("没有授权就无法把脚本交给 Termux");
+            }
+            return;
+        }
+        super.onRequestPermissionsResult(req, perms, res);
+    }
+
     private void askAllFiles() {
         if (Build.VERSION.SDK_INT >= 30) {
             try {
@@ -371,7 +402,7 @@ public class MainActivity extends Activity {
         b.append("termux-wake-lock 2>/dev/null\n");
         b.append("st \"编译中\" 25 running\n");
         b.append("cd \"$GU\" || { st \"源码缺失\" 0 failed; exit 1; }\n");
-        b.append("python tools/build_android.py \"$G\" --jobs 6 2>&1 | tee -a \"$B/build.log\" | while IFS= read -r ln; do\n");
+        b.append("python tools/build_android.py \"$G\" 2>&1 | tee -a \"$B/build.log\" | while IFS= read -r ln; do\n");
         b.append("  case \"$ln\" in\n");
         b.append("    *\"阶段 1/3\"*) st \"翻译 ARM 到 C\" 30 running ;;\n");
         b.append("    *\"阶段 2/3\"*) st \"编译 C\" 45 running ;;\n");
@@ -613,7 +644,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static String quote(String s) {
+    static String quote(String s) {
         if (s == null) return "null";
         StringBuilder b = new StringBuilder("\"");
         for (int i = 0; i < s.length(); i++) {
@@ -708,7 +739,25 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void downloadApk(String url, String name) {
-            new Thread(new DownloadJob(act, url, name)).start();
+            new Thread(new DownloadJob(act, Mirrors.apply(url, Mirrors.resolve(act)), name)).start();
+        }
+
+        @JavascriptInterface
+        public String mirrorInfo() {
+            String sel = act.sp.getString("mirror", "auto");
+            String best = act.sp.getString("mirrorBest", "");
+            String json = Mirrors.listJson(sel);
+            return json.substring(0, json.length() - 1) + ",\"best\":" + quote(best) + "}";
+        }
+
+        @JavascriptInterface
+        public void setMirror(String id) {
+            act.sp.edit().putString("mirror", id).apply();
+        }
+
+        @JavascriptInterface
+        public void testMirrors() {
+            new Thread(new SpeedJob(act)).start();
         }
 
         @JavascriptInterface
@@ -779,7 +828,7 @@ public class MainActivity extends Activity {
             act.openTreePicker();
         }
 
-        /** 写 run.sh 交给 Termux 执行；进度由 status.json 回传，不走 run-as */
+        /** 内置工具链在本进程内编译，进度与日志直接来自子进程输出 */
         @JavascriptInterface
         public void buildSo() {
             try {
@@ -789,22 +838,14 @@ public class MainActivity extends Activity {
                     toast("这个文件夹没有 exefs/main，先选对目录");
                     return;
                 }
-                if (!hasTermux()) {
-                    toast("没装 Termux，无法编译");
+                if (Builder.running()) {
+                    toast("已经在编译了");
                     return;
                 }
-                File bd = new File(g, "_build");
-                if (!bd.exists() && !bd.mkdirs()) {
-                    toast("写不了 " + bd.getAbsolutePath() + "，检查「所有文件访问权限」");
-                    return;
-                }
-                new File(bd, "status.json").delete();
-                new File(bd, "build.log").delete();
-                act.setStage(bd, "准备源码", 2, "running");
-                new Thread(new PrepJob(act, dir)).start();
-                toast("开始准备并编译，进度会自动刷新");
+                Builder.start(act, dir);
+                toast("开始编译");
             } catch (Exception e) {
-                toast("启动编译失败：" + e.getMessage());
+                toast("启动失败：" + e.getMessage());
             }
         }
 
@@ -812,15 +853,10 @@ public class MainActivity extends Activity {
         public String buildStatus() {
             try {
                 String dir = act.sp.getString("gameDir", GAME_DIR);
-                File st = new File(new File(dir, "_build"), "status.json");
-                String body = st.isFile() ? readAll(st).trim() : "";
-                if (body.isEmpty()) {
-                    body = "{\"stage\":\"未开始\",\"percent\":0,\"status\":\"idle\"}";
-                }
                 File so = new File(dir, "libmhgugame.so");
                 return "{\"ok\":true,\"dir\":" + quote(dir)
                         + ",\"soMB\":" + (so.isFile() ? so.length() / 1048576 : 0)
-                        + ",\"state\":" + body + "}";
+                        + ",\"state\":" + Builder.stateJson() + "}";
             } catch (Exception e) {
                 return "{\"ok\":false,\"error\":" + quote(e.toString()) + "}";
             }
@@ -828,15 +864,29 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String buildLog() {
+            String s = Builder.logText();
+            return s.length() > 12000 ? s.substring(s.length() - 12000) : s;
+        }
+
+        /** 编译引擎与源码状态 */
+        @JavascriptInterface
+        public String engineInfo() {
+            JSONObject o = new JSONObject();
             try {
-                String dir = act.sp.getString("gameDir", GAME_DIR);
-                File lg = new File(new File(dir, "_build"), "build.log");
-                if (!lg.isFile()) return "";
-                String s = readAll(lg);
-                return s.length() > 8000 ? s.substring(s.length() - 8000) : s;
-            } catch (Exception e) {
-                return "";
+                o.put("toolchain", Toolchain.ready(act));
+                o.put("src", Builder.srcReady(act));
+                o.put("srcDate", Builder.srcStamp(act));
+                o.put("running", Builder.running());
+            } catch (Exception ignored) {
             }
+            return o.toString();
+        }
+
+        /** 强制重新拉取 gu-native 源码 */
+        @JavascriptInterface
+        public void updateSource() {
+            new Thread(new SourceJob(act)).start();
+            toast("正在拉取最新源码");
         }
 
         @JavascriptInterface
@@ -880,6 +930,200 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void copyToClipboard(String text) {
             act.ui.post(new ClipJob(act, text));
+        }
+    }
+
+    // ================================================================ exec 探测
+    //
+    // 目的：确认「把可执行文件当 lib*.so 打进 APK」后，本进程能否直接 execve。
+    // 这决定成品能否自带 clang / python，不再依赖 Termux。
+    //   Android 10 起 App 数据目录被 W^X 拦住（filesDir 里的 ELF 不能执行），
+    //   而 nativeLibraryDir（/data/app/…/lib/arm64）通常允许执行。
+    // 结果写到 getExternalFilesDir()/exec_probe.txt，adb 可直接读。
+
+    static class ProbeJob implements Runnable {
+        private final Activity act;
+
+        ProbeJob(Activity a) {
+            this.act = a;
+        }
+
+        /** 只用 arm_neon.h 里的东西，验证 gen.py 产出的代码能否被内置 clang 编译 */
+        private static final String NEON_SRC =
+                "#include <arm_neon.h>\n"
+              + "float32x4_t f(float32x4_t a, float32x4_t b) {\n"
+              + "    float32x4_t m = vmulq_f32(a, b);\n"
+              + "    return vaddq_f32(m, vdupq_n_f32(1.0f));\n"
+              + "}\n"
+              + "int g(const signed char *p) {\n"
+              + "    int8x16_t v = vld1q_s8(p);\n"
+              + "    return vaddvq_s8(v);\n"
+              + "}\n";
+
+        public void run() {
+            StringBuilder sb = new StringBuilder();
+            File outDir = act.getExternalFilesDir(null);
+            if (outDir != null && !outDir.exists()) outDir.mkdirs();
+            try {
+                sb.append("sdk=").append(android.os.Build.VERSION.SDK_INT).append('\n');
+                sb.append("nativeLibraryDir=").append(Toolchain.nativeDir(act)).append('\n');
+
+                StringBuilder elog = new StringBuilder();
+                long t0 = System.currentTimeMillis();
+                boolean ok = Toolchain.ensure(act, elog);
+                sb.append("ensure=").append(ok).append(' ').append(elog);
+                sb.append("elapsed=").append(System.currentTimeMillis() - t0).append(" ms\n");
+
+                sb.append("\n=== clang --version\n");
+                java.util.ArrayList<String> v = new java.util.ArrayList<String>();
+                v.add(Toolchain.clang(act).getAbsolutePath());
+                v.add("--version");
+                sb.append(run(v));
+
+                sb.append("\n=== python --version\n");
+                java.util.ArrayList<String> pv = new java.util.ArrayList<String>();
+                pv.add(Toolchain.python(act).getAbsolutePath());
+                pv.add("--version");
+                sb.append(run(pv));
+
+                sb.append("\n=== python 跑一段脚本\n");
+                java.util.ArrayList<String> ps = new java.util.ArrayList<String>();
+                ps.add(Toolchain.python(act).getAbsolutePath());
+                ps.add("-c");
+                ps.add("import sys, argparse, json, hashlib, struct, shutil; print('PY_OK', sys.version.split()[0], hashlib.sha256(b'x').hexdigest()[:8])");
+                sb.append(run(ps));
+
+                sb.append("\n=== clang 编译并链接 NEON 测试\n");
+                File c = new File(act.getCacheDir(), "neon_test.c");
+                writeText(c, NEON_SRC);
+                File so = new File(act.getCacheDir(), "neon_test.so");
+                so.delete();
+                java.util.ArrayList<String> cc = new java.util.ArrayList<String>();
+                cc.add(Toolchain.clang(act).getAbsolutePath());
+                cc.add("--target=aarch64-linux-android29");
+                cc.add("-O1");
+                cc.add("-shared");
+                cc.add("-fPIC");
+                cc.add("-resource-dir=" + Toolchain.resDir(act).getAbsolutePath());
+                cc.add("--sysroot=" + Toolchain.sysroot(act).getAbsolutePath());
+                cc.add("--ld-path=" + Toolchain.lld(act).getAbsolutePath());
+                cc.add("-o");
+                cc.add(so.getAbsolutePath());
+                cc.add(c.getAbsolutePath());
+                sb.append(run(cc));
+                sb.append("so_exists=").append(so.isFile()).append(" size=").append(so.length()).append('\n');
+                if (so.isFile()) {
+                    byte[] h = new byte[20];
+                    FileInputStream fi = new FileInputStream(so);
+                    int n = fi.read(h);
+                    fi.close();
+                    sb.append("elf_magic=").append(h[0] == 0x7f && h[1] == 'E').append(" machine=0x")
+                      .append(Integer.toHexString(h[18] & 0xff)).append(Integer.toHexString(h[19] & 0xff)).append('\n');
+                    so.delete();
+                }
+                c.delete();
+            } catch (Throwable t) {
+                sb.append("EXCEPTION ").append(t).append('\n');
+            }
+            try {
+                if (outDir != null) {
+                    FileOutputStream fos = new FileOutputStream(new File(outDir, "exec_probe.txt"));
+                    fos.write(sb.toString().getBytes("UTF-8"));
+                    fos.close();
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+
+        private String run(java.util.ArrayList<String> cmd) {
+            StringBuilder sb = new StringBuilder();
+            try {
+                ProcessBuilder pb = new ProcessBuilder(cmd);
+                pb.redirectErrorStream(true);
+                Toolchain.applyEnv(pb, act);
+                pb.directory(act.getCacheDir());
+                Process p = pb.start();
+                BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                String line;
+                while ((line = r.readLine()) != null) sb.append("  ").append(line).append('\n');
+                sb.append("  exit=").append(p.waitFor()).append('\n');
+            } catch (Throwable t) {
+                sb.append("  EXEC_FAIL ").append(t).append('\n');
+            }
+            return sb.toString();
+        }
+
+        private static void writeText(File f, String s) {
+            try {
+                FileOutputStream o = new FileOutputStream(f);
+                o.write(s.getBytes("UTF-8"));
+                o.close();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /** 后台拉取源码，完成后回调界面刷新 */
+    static class SourceJob implements Runnable {
+        private final MainActivity act;
+
+        SourceJob(MainActivity a) {
+            this.act = a;
+        }
+
+        public void run() {
+            String err = "";
+            try {
+                Builder.ensureSource(act.getApplicationContext(), true, false);
+            } catch (Throwable t) {
+                err = String.valueOf(t.getMessage());
+            }
+            final String e = err;
+            act.ui.post(new Done(act, e));
+        }
+
+        static class Done implements Runnable {
+            private final MainActivity act;
+            private final String err;
+
+            Done(MainActivity a, String e) {
+                this.act = a;
+                this.err = e;
+            }
+
+            public void run() {
+                act.call("__onSource", "{\"ok\":" + (err.isEmpty() ? "true" : "false")
+                        + ",\"error\":" + MainActivity.quote(err) + "}");
+            }
+        }
+    }
+
+    /** 并发测速所有下载源，取最快的存下来 */
+    static class SpeedJob implements Runnable {
+        private final MainActivity act;
+
+        SpeedJob(MainActivity a) {
+            this.act = a;
+        }
+
+        public void run() {
+            java.util.List<String[]> r = Mirrors.speedTest();
+            StringBuilder sb = new StringBuilder("[");
+            String best = "";
+            long bestMs = Long.MAX_VALUE;
+            for (int i = 0; i < r.size(); i++) {
+                String[] m = r.get(i);
+                long ms = Long.parseLong(m[1]);
+                if (ms >= 0 && ms < bestMs) {
+                    bestMs = ms;
+                    best = m[0];
+                }
+                if (i > 0) sb.append(',');
+                sb.append("{\"id\":\"").append(m[0]).append("\",\"ms\":").append(ms).append('}');
+            }
+            sb.append(']');
+            act.sp.edit().putString("mirrorBest", best).apply();
+            act.call("__onSpeed", "{\"result\":" + sb + ",\"best\":\"" + best + "\"}");
         }
     }
 }

@@ -3,15 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>MHGU 手机管家</title>
+<title>MHGU 管家</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <div class="hd">
-  <h1>MHGU 手机管家</h1>
-  <div class="sub">两个安卓原生版本，一处下载、一处看更新说明</div>
-  <div class="dev" id="dev">读取设备信息…</div>
+  <h1>MHGU 管家</h1>
+  <div class="dev" id="dev">读取设备…</div>
 </div>
 
 <div class="tabs">
@@ -19,31 +18,31 @@
   <div class="tab" id="tabTouch" onclick="switchTab('touch')">触屏版</div>
 </div>
 
-<!-- ==================== 游戏文件夹 ==================== -->
 <div class="card" id="cardDir">
   <div class="title"><b>游戏文件夹</b><span class="badge" id="dirBadge">未选</span></div>
-  <div class="desc">游戏资源放在哪个目录，由你指定。编译和启动都指向这里，APK 自身不带任何游戏文件。</div>
-  <div class="kv"><span>当前路径</span><span id="dirPath">—</span></div>
-  <div class="kv"><span>exefs</span><span id="dirExefs">—</span></div>
-  <div class="kv"><span>romfs</span><span id="dirRomfs">—</span></div>
-  <div class="kv"><span>libmhgugame.so</span><span id="dirSo">—</span></div>
-  <div class="btns">
-    <button class="pri" onclick="pickDir()">选择游戏文件夹</button>
-  </div>
-  <div class="hint">第一次会跳去授予「所有文件访问权限」，之后才能读到 <code>/sdcard/111</code> 这类目录。</div>
+  <div class="kv"><span>路径</span><span id="dirPath">—</span></div>
+  <div class="kv"><span>exefs / romfs</span><span id="dirRes">—</span></div>
+  <div class="kv"><span>游戏代码</span><span id="dirSo">—</span></div>
+  <div class="btns"><button class="pri" onclick="pickDir()">选择文件夹</button></div>
 </div>
 
-<!-- ==================== 官方版 ==================== -->
+<div class="card" id="cardMirror">
+  <div class="title"><b>下载源</b><span class="badge" id="mirBadge">自动</span></div>
+  <div class="kv"><span>当前</span><span id="mirNow">—</span></div>
+  <div class="btns">
+    <select id="mirSel" onchange="setMirror(this.value)"></select>
+    <button class="ghost" onclick="testMirrors()">测速</button>
+  </div>
+</div>
+
 <div class="card" id="cardOfficial">
-  <div class="title"><b id="offTitle">官方版 MHGU Recomp</b><span class="badge" id="offBadge">检查中</span></div>
-  <div class="desc">用实体手柄或虚拟手柄悬浮窗操作。APK 里已经带好编译过的游戏代码，装上就能用，不需要电脑编译。</div>
-  <div class="kv"><span>上游仓库</span><span>morerokk/MHGURecomp</span></div>
-  <div class="kv"><span>最新版本</span><span id="offVer">—</span></div>
+  <div class="title"><b>官方版 MHGU Recomp</b><span class="badge" id="offBadge">—</span></div>
+  <div class="kv"><span>最新版本</span><span id="offVer">查询中…</span></div>
   <div class="kv"><span>APK 大小</span><span id="offSize">—</span></div>
   <div class="kv"><span>已装版本</span><span id="offInstalled">—</span></div>
   <div class="btns">
     <button class="pri" id="offDl" onclick="doDownload('official')">下载 APK</button>
-    <button onclick="App.openApp('official')">打开游戏</button>
+    <button onclick="App.openApp('official')">打开</button>
     <button class="ghost" onclick="checkRelease('official')">检查更新</button>
   </div>
   <div class="notes">
@@ -52,19 +51,14 @@
   </div>
 </div>
 
-<!-- ==================== 触屏版 ==================== -->
 <div class="card hide" id="cardTouch">
-  <div class="title"><b>触屏版 gu-native</b><span class="badge" id="tchBadge">检查中</span></div>
-  <div class="desc">完全为手机做的触控：固定摇杆、拖动转视角、怪物锁定、弓弩专用布局、按键可自定义。APK 只有 7 MB，因为它不含游戏代码。</div>
-  <div class="kv"><span>上游仓库</span><span>khorne-hub/gu-native</span></div>
-  <div class="kv"><span>最新版本</span><span id="tchVer">—</span></div>
+  <div class="title"><b>触屏版 gu-native</b><span class="badge" id="tchBadge">—</span></div>
+  <div class="kv"><span>最新版本</span><span id="tchVer">查询中…</span></div>
   <div class="kv"><span>APK 大小</span><span id="tchSize">—</span></div>
   <div class="kv"><span>已装版本</span><span id="tchInstalled">—</span></div>
-  <div class="kv"><span>游戏文件夹</span><span id="tchGameDir">—</span></div>
-  <div class="kv"><span>游戏代码 so</span><span id="tchSo">—</span></div>
   <div class="btns">
     <button class="pri" id="tchDl" onclick="doDownload('touch')">下载 APK</button>
-    <button onclick="App.openApp('touch')">打开游戏</button>
+    <button onclick="App.openApp('touch')">打开</button>
     <button class="ghost" onclick="checkRelease('touch')">检查更新</button>
   </div>
   <div class="notes">
@@ -73,57 +67,34 @@
   </div>
 </div>
 
-<!-- ==================== so 编译 ==================== -->
 <div class="card hide" id="cardBuild">
-  <div class="title"><b>游戏代码（so）</b><span class="badge" id="bBadge">未开始</span></div>
-  <div class="desc">用你自己的 exefs 生成。编译交给 Termux 在它自己的权限下跑，产物直接写回游戏文件夹，不用中转。</div>
-  <div class="kv"><span>so 状态</span><span id="bSo">—</span></div>
-  <div class="kv"><span>Termux</span><span id="bTermux">—</span></div>
-  <div class="kv"><span>当前阶段</span><span id="bStage">—</span></div>
+  <div class="title"><b>游戏代码</b><span class="badge" id="bBadge">未开始</span></div>
+  <div class="kv"><span>当前状态</span><span id="bSo">—</span></div>
+  <div class="kv"><span>阶段</span><span id="bStage">—</span></div>
   <div class="prog"><i id="bBar"></i></div>
   <div class="btns">
-    <button class="pri" id="bBtn" onclick="startBuild()">开始编译</button>
-    <button class="ghost" onclick="showLog()">看日志</button>
+    <button class="pri" id="bBtn" onclick="startBuild()">编译</button>
+    <button class="ghost" onclick="showLog()">日志</button>
   </div>
   <pre id="bLog" style="display:none;margin-top:10px"></pre>
-  <div class="hint">
-    <b style="color:#d69b45">代价先说清：</b>把 exefs 翻成 C 再编译，PC 上 6 分钟，这台手机实测也是 <b>6 分钟</b>
-    （384 个 C 文件、6 并行）。峰值约 3 GB 空间，会明显发热。<br>
-    已经是同版本的 so 会直接跳过，不重复编。
-  </div>
-  <details style="margin-top:12px">
-    <summary style="cursor:pointer;color:#e0bb63;font-size:13.5px">首次准备：允许外部调用 Termux（点开）</summary>
-    <div class="hint" style="margin-top:8px">
-      Termux 默认不让别的应用调它的命令服务，要开一次：<br>
-      1. 点下面的按钮复制命令<br>
-      2. 打开 Termux，长按屏幕选 Paste，回车<br>
-      3. 回来点「开始编译」，依赖（python / clang / lz4 / unzip）脚本会自己装
-      <div class="btns" style="margin-top:8px">
-        <button class="ghost" onclick="copyTermuxPrep()">复制准备命令</button>
-      </div>
-    </div>
-  </details>
+  <div class="kv" style="margin-top:10px"><span>源码</span><span id="srcState">—</span></div>
+  <div class="btns"><button class="ghost" onclick="updSource()">更新源码</button></div>
 </div>
 
 <div class="warnbox">
-  <b>两条都适用的注意</b><br>
-  · 装好后<b>不要卸载 app</b>，卸载会连 12 GB 游戏文件一起删掉；升级直接覆盖安装。<br>
-  · 游戏文件（exefs / romfs）两条支路通用，一份就够，放在 <code>/sdcard/MHGU</code>。<br>
-  · 官方版要读这份公共目录，进游戏后用 <b>Plus+Minus</b> 打开设置 → Android 页 → Game files folder 指过去。<br>
-  · 中文是 1.4.0 更新自带的官方语言资源，进游戏 Options → Language 选简体中文即可。
+  装好后别卸载 app，卸载会连游戏文件一起删。<br>
+  游戏文件两条支路共用一份；中文在游戏内 Options → Language 选。
 </div>
 
 <div class="foot">
-  本应用不含任何游戏文件、密钥或游戏代码<br>
-  <a href="https://github.com/biigdrong/mhgu-tool">mhgu-tool</a> ·
-  官方版 <a href="https://github.com/morerokk/MHGURecomp">MHGURecomp</a> ·
-  触屏版 <a href="https://github.com/khorne-hub/gu-native">gu-native</a>
+  不含游戏文件、密钥或游戏代码 ·
+  <a href="https://github.com/biigdrong/mhgu-tool">mhgu-tool</a>
 </div>
 
 <script>
 var B = {
-  official: { name:"官方版 MHGU Recomp", pkg:"io.github.morerokk.mhgurecomp", repo:"morerokk/MHGURecomp" },
-  touch:    { name:"触屏版 gu-native",  pkg:"com.mhgu.recomp",              repo:"khorne-hub/gu-native" }
+  official: { pkg:"io.github.morerokk.mhgurecomp" },
+  touch:    { pkg:"com.mhgu.recomp" }
 };
 var REL = { official:null, touch:null };
 var CUR = "official";
@@ -138,6 +109,7 @@ function switchTab(k){
   $("cardOfficial").className = "card" + (k==="official" ? "" : " hide");
   $("cardTouch").className    = "card" + (k==="touch" ? "" : " hide");
   $("cardBuild").className    = "card" + (k==="touch" ? "" : " hide");
+  if (k==="touch") refreshEngine();
 }
 
 function toggleNotes(p){
@@ -145,20 +117,13 @@ function toggleNotes(p){
   el.style.display = el.style.display === "none" ? "block" : "none";
 }
 
-/* ---------------- 设备与安装状态 ---------------- */
 function boot(){
   try {
     var d = JSON.parse(App.deviceInfo());
-    $("dev").textContent = d.brand + " " + d.model + " · Android " + d.release +
-      " (" + d.sdk + ") · " + (d.abis||[]).join("/") + " · 剩余 " + d.freeGB + " GB";
-  } catch(e) { $("dev").textContent = "设备信息不可用"; }
+    $("dev").textContent = d.model + " · Android " + d.release + " · " + d.freeGB + " GB 可用";
+  } catch(e) { $("dev").textContent = ""; }
   refreshInstalled();
   refreshGameDir();
-  var hasT = false;
-  try { hasT = App.hasTermux(); } catch(e) {}
-  $("bTermux").innerHTML = hasT
-    ? '<span style="color:#4ea87a">已安装</span>'
-    : '<span style="color:#cf5c5c">未安装</span>';
   checkRelease("official");
   checkRelease("touch");
 }
@@ -167,10 +132,8 @@ function refreshInstalled(){
   try {
     var i = JSON.parse(App.installed());
     var o = i.official || {}, t = i.touch || {};
-    $("offInstalled").innerHTML = o.installed
-      ? '<span style="color:#4ea87a">已装 v' + o.ver + '</span>' : "未安装";
-    $("tchInstalled").innerHTML = t.installed
-      ? '<span style="color:#4ea87a">已装 v' + t.ver + '</span>' : "未安装";
+    $("offInstalled").innerHTML = o.installed ? '<span style="color:#4ea87a">v' + o.ver + '</span>' : "未安装";
+    $("tchInstalled").innerHTML = t.installed ? '<span style="color:#4ea87a">v' + t.ver + '</span>' : "未安装";
     $("offBadge").className = "badge " + (o.installed ? "ok" : "");
     $("offBadge").textContent = o.installed ? "已装" : "未装";
     $("tchBadge").className = "badge " + (t.installed ? "ok" : "");
@@ -181,25 +144,22 @@ function refreshInstalled(){
 function refreshGameDir(){
   try {
     var g = JSON.parse(App.gameDirState());
-    window.__gameDir = g.path || "/sdcard/111/MHGU";
-    var okAll = g.exefs && g.romfs && g.so;
+    window.__gameDir = g.path || "";
     $("dirPath").textContent = g.path || "—";
-    $("dirBadge").className = "badge " + (okAll ? "ok" : (g.chosen ? "warn" : ""));
-    $("dirBadge").textContent = okAll ? "完整" : (g.chosen ? "不完整" : "未选");
-    $("dirExefs").innerHTML = g.exefs ? '<span style="color:#4ea87a">有</span>' : '<span style="color:#cf5c5c">缺</span>';
-    $("dirRomfs").innerHTML = g.romfs ? '<span style="color:#4ea87a">有</span>' : '<span style="color:#cf5c5c">缺</span>';
-    $("dirSo").innerHTML = g.so ? '<span style="color:#4ea87a">' + g.soMB + ' MB</span>' : '<span style="color:#cf5c5c">缺，需要生成</span>';
-    $("tchGameDir").textContent = g.path || "—";
-    $("tchSo").innerHTML = g.so ? '<span style="color:#4ea87a">已有 ' + g.soMB + ' MB</span>' : '<span style="color:#cf5c5c">缺</span>';
+    var okRes = g.exefs && g.romfs;
+    $("dirBadge").className = "badge " + (okRes && g.so ? "ok" : (okRes ? "warn" : ""));
+    $("dirBadge").textContent = !okRes ? "缺资源" : (g.so ? "完整" : "缺代码");
+    $("dirRes").innerHTML = okRes ? '<span style="color:#4ea87a">齐全</span>'
+      : '<span style="color:#cf5c5c">' + (g.exefs ? "缺 romfs" : "缺 exefs") + '</span>';
+    $("dirSo").innerHTML = g.so ? '<span style="color:#4ea87a">' + g.soMB + ' MB</span>'
+      : '<span style="color:#cf5c5c">未编译</span>';
     $("bSo").innerHTML = g.so
-      ? '<span style="color:#4ea87a">' + g.soMB + ' MB</span>' + (g.soId ? ' · ' + g.soId : '')
-      : '<span style="color:#cf5c5c">缺</span>';
+      ? '<span style="color:#4ea87a">' + g.soMB + ' MB' + (g.soId ? ' · ' + g.soId : '') + '</span>'
+      : '<span style="color:#cf5c5c">未编译</span>';
   } catch(e) {}
 }
 
-function pickDir(){
-  try { App.pickGameDir(); } catch(e) { alert("桥未就绪：" + e); }
-}
+function pickDir(){ try { App.pickGameDir(); } catch(e) {} }
 
 window.__onGameDir = function(r){
   if (!r || !r.ok) return;
@@ -207,25 +167,21 @@ window.__onGameDir = function(r){
   refreshGameDir();
 };
 
-/* ---------------- 版本查询 ---------------- */
-function checkRelease(k){
-  try { App.fetchRelease(k); } catch(e) {}
-}
+function checkRelease(k){ try { App.fetchRelease(k); } catch(e) {} }
 
 window.__onRelease = function(branch, r){
   REL[branch] = r;
   var pf = branch === "official" ? "off" : "tch";
   if (!r.ok){
     $(pf + "Ver").innerHTML = '<span style="color:#cf5c5c">查询失败</span>';
-    $(pf + "Notes").innerHTML = "取不到 GitHub 数据：" + (r.error||"") +
-      "\n\n可以点「下载 APK」直接下最新版，或到浏览器打开仓库页面。";
+    $(pf + "Notes").textContent = "取不到 GitHub 数据：" + (r.error||"");
     return;
   }
   var apk = (r.assets && r.assets[0]) || null;
   $(pf + "Ver").innerHTML = r.tag + (r.prerelease ? ' <span class="badge warn">预发布</span>' : '');
   $(pf + "Size").textContent = apk ? mb(apk.size) : "—";
-  var zh = branch === "official" ? ZH_OFFICIAL : ZH_TOUCH;
-  $(pf + "Notes").innerHTML = '<div class="zh">' + zh + '</div>' + esc(r.notes || "（这个版本没有写说明）");
+  $(pf + "Notes").innerHTML = '<div class="zh">' + (branch === "official" ? ZH_OFFICIAL : ZH_TOUCH)
+    + '</div>' + esc(r.notes || "");
   var btn = $(pf === "off" ? "offDl" : "tchDl");
   btn.disabled = !apk;
   btn.textContent = apk ? ("下载 " + r.tag) : "暂无 APK";
@@ -235,13 +191,9 @@ function esc(s){
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 }
 
-/* ---------------- 下载 ---------------- */
 function doDownload(branch){
   var r = REL[branch];
-  if (!r || !r.ok || !r.assets || !r.assets.length){
-    App.toast("还没拿到版本信息，稍等或先检查更新");
-    return;
-  }
+  if (!r || !r.ok || !r.assets || !r.assets.length){ App.toast("还没拿到版本信息"); return; }
   var a = r.assets[0];
   App.downloadApk(a.url, a.name);
   $("offDl").disabled = $("tchDl").disabled = true;
@@ -249,25 +201,19 @@ function doDownload(branch){
 
 window.__onDownload = function(r){
   $("offDl").disabled = $("tchDl").disabled = false;
-  if (r.ok){
-    App.toast("已开始下载 " + r.name + "，看通知栏进度");
-  } else {
-    App.toast("下载失败：" + (r.error||""));
-  }
+  App.toast(r.ok ? ("开始下载 " + r.name) : ("下载失败：" + (r.error||"")));
 };
 
-/* ---------------- 编译（Termux 正常域 + 状态文件轮询） ---------------- */
+/* ---------------- 编译 ---------------- */
 var buildTimer = null;
 
 function startBuild(){
-  try { App.buildSo(); } catch(e) { alert("桥未就绪：" + e); return; }
+  try { App.buildSo(); } catch(e) { return; }
   $("bLog").style.display = "none";
   $("bBtn").disabled = true;
-  $("bBadge").className = "badge warn";
-  $("bBadge").textContent = "排队中";
   if (buildTimer) clearInterval(buildTimer);
   buildTimer = setInterval(pollBuild, 1500);
-  pollBuild();
+  setTimeout(pollBuild, 600);
 }
 
 function pollBuild(){
@@ -279,8 +225,7 @@ function pollBuild(){
   $("bStage").textContent = (s.stage || "—") + "  " + pct + "%";
   $("bBar").style.width = pct + "%";
   var st = s.status || "idle";
-  var map = { idle:["", "未开始"], running:["warn", "进行中"], done:["ok", "已完成"], failed:["bad", "失败"] };
-  var m = map[st] || ["", st];
+  var m = { idle:["","未开始"], running:["warn","进行中"], done:["ok","已完成"], failed:["bad","失败"] }[st] || ["", st];
   $("bBadge").className = "badge " + m[0];
   $("bBadge").textContent = m[1];
   if (r.soMB) $("bSo").innerHTML = '<span style="color:#4ea87a">' + r.soMB + ' MB</span>';
@@ -295,20 +240,88 @@ function pollBuild(){
 function showLog(){
   try {
     var s = App.buildLog();
-    $("bLog").textContent = s || "(还没有日志，先点开始编译)";
+    $("bLog").textContent = s || "(暂无日志)";
     $("bLog").style.display = "block";
   } catch(e) {}
 }
 
-function copyTermuxPrep(){
-  var cmd = "mkdir -p ~/.termux && (grep -q allow-external-apps ~/.termux/termux.properties 2>/dev/null || echo allow-external-apps=true >> ~/.termux/termux.properties); termux-reload-settings; echo READY";
-  try { App.copyToClipboard(cmd); } catch(e) { alert("复制失败：" + e); }
+function refreshEngine(){
+  try {
+    var e = JSON.parse(App.engineInfo());
+    $("srcState").innerHTML = e.src
+      ? '<span style="color:#4ea87a">' + (e.srcDate || "已下载") + '</span>'
+      : '<span style="color:#d69b45">未下载，编译时自动拉取</span>';
+  } catch(e) {}
 }
 
-var ZH_OFFICIAL = "本版要点（中文摘要）：安卓端新增两种取文件方式——把文件导入 app 私有目录，或直接读取你选的文件夹（SD 卡、U 盘都行，不占双份空间）；新增 Android 设置页，可导入导出存档、单独指定存档目录、导入 mod 压缩包、随时更换游戏文件夹；崩溃时可直接分享 log.txt；容错 Linux 下 Yuzu 解出的大写 NativeNX 目录；mod 支持只替换 .arc 里的部分条目；新增 Android TV / Shield TV 支持。";
-var ZH_TOUCH = "本版要点（中文摘要）：修复小怪同步相关的联机问题；修复伤害显示等 Forge mod 导致的崩溃；新增 module 机制，让 mod 能以原生方式扩展运行时（为 FSR 4 之类铺路）。触控本身包含固定摇杆、全屏拖动转视角、怪物锁定跟随、弓弩专用布局、物品栏滑动、狩猎技面板、按键编辑器与自定义组合键。";
+function updSource(){
+  try { App.updateSource(); } catch(e) {}
+  $("srcState").textContent = "拉取中…";
+}
+
+window.__onSource = function(r){
+  refreshEngine();
+  try { App.toast(r.ok ? "源码已更新" : ("更新失败：" + (r.error||""))); } catch(e) {}
+};
+
+/* ---------------- 下载源 ---------------- */
+var MIR = { list: [], sel: "auto", best: "", ms: {} };
+
+function refreshMirror(){
+  try {
+    var m = JSON.parse(App.mirrorInfo());
+    MIR.list = m.list || []; MIR.sel = m.selected || "auto"; MIR.best = m.best || "";
+    var sel = $("mirSel");
+    sel.innerHTML = '<option value="auto">自动（选最快）</option>';
+    for (var i = 0; i < MIR.list.length; i++){
+      var o = document.createElement("option");
+      o.value = MIR.list[i].id; o.textContent = MIR.list[i].name;
+      sel.appendChild(o);
+    }
+    sel.value = MIR.sel;
+    $("mirBadge").textContent = MIR.sel === "auto" ? "自动" : "手动";
+    showMirrorNow();
+  } catch(e) {}
+}
+
+function showMirrorNow(){
+  var name = function(id){
+    for (var i = 0; i < MIR.list.length; i++) if (MIR.list[i].id === id) return MIR.list[i].name;
+    return id || "直连";
+  };
+  var eff = MIR.sel === "auto" ? (MIR.best || "direct") : MIR.sel;
+  var ms = MIR.ms[eff];
+  $("mirNow").innerHTML = name(eff) + (ms ? ' <span style="color:#4ea87a">' + ms + ' ms</span>' : '');
+}
+
+function setMirror(id){
+  try { App.setMirror(id); } catch(e) {}
+  MIR.sel = id;
+  $("mirBadge").textContent = id === "auto" ? "自动" : "手动";
+  showMirrorNow();
+}
+
+function testMirrors(){
+  $("mirNow").textContent = "测速中…";
+  try { App.testMirrors(); } catch(e) {}
+}
+
+window.__onSpeed = function(r){
+  MIR.ms = {};
+  (r.result || []).forEach(function(x){ if (x.ms >= 0) MIR.ms[x.id] = x.ms; });
+  MIR.best = r.best || "";
+  MIR.sel = "auto";
+  $("mirSel").value = "auto";
+  $("mirBadge").textContent = "自动";
+  showMirrorNow();
+};
+
+var ZH_OFFICIAL = "安卓端新增两种取文件方式：导入到 app 私有目录，或直接读取你选的文件夹（SD 卡、U 盘，不占双份）；新增 Android 设置页，可导入导出存档、单独指定存档目录、导入 mod、更换游戏文件夹；崩溃可直接分享 log.txt；容错大写 NativeNX 目录；mod 可只替换 .arc 内部分条目；新增 Android TV 支持。";
+var ZH_TOUCH = "修复联机小怪同步问题；修复 Forge mod 导致的崩溃；新增 module 机制，让 mod 能以原生方式扩展运行时。触控含固定摇杆、全屏拖动转视角、怪物锁定、弓弩专用布局、物品栏滑动、狩猎技面板、按键编辑器与自定义组合键。";
 
 boot();
+refreshEngine();
+refreshMirror();
 </script>
 </body>
 </html>

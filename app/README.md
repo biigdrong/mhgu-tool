@@ -1,84 +1,80 @@
 # mhgu-app —— MHGU 手机管家（Android）
 
-一个 40 KB 的 WebView 壳，把两件事收到一部手机上：**看两个分支的版本与中文更新说明**、**下载对应 APK**。
-它自己不玩游戏，也不含任何游戏数据。
+一个自包含的 WebView 应用：**下载两个分支的 APK**、**看中文更新说明**、**用手机自带的
+内置工具链现场编译触屏版所需的 `libmhgugame.so`**。不需要 Termux、不需要电脑。
 
-## 它能做什么
+本应用不含任何游戏文件、密钥或游戏代码；编译必须使用用户自己的 1.4.0 `exefs`。
+
+## 功能
 
 | 功能 | 说明 |
 |---|---|
-| 双分支面板 | 官方版（MHGURecomp）与触屏版（gu-native），各自显示最新版本、APK 大小、已装版本 |
-| 中文更新说明 | 每个版本的要点用中文写死在内置数据里，英文原文可展开对照 |
-| 下载 APK | 走系统下载管理器，通知栏可见，可断点；下载完直接点装 |
-| 环境体检 | 读设备型号 / Android 版本 / ABI / 剩余空间，看 `/sdcard/MHGU` 里 exefs、romfs、so 是否齐 |
-| 唤起 Termux | 触屏版的 so 需要本机生成，可一键把脚本交给 Termux 跑 |
+| 双分支面板 | 官方版（MHGURecomp）与触屏版（gu-native），显示最新版本、APK 大小、已装版本 |
+| 下载源 | 直连 + ghfast.top / gh-proxy.com / ghproxy.net / gh.llkk.cc，并发测速取最快，可手动锁定 |
+| 下载 APK | 走系统下载管理器，通知栏可见进度；URL 自动套用所选源前缀 |
+| 源码联网更新 | gu-native `main.zip` 按需拉取，带 `If-None-Match`，未变化时 304 跳过 |
+| 内置编译 | clang 21.1.8 + lld + Python 3.14 全部打包在 APK 内，在自家进程里跑 |
+| 对象缓存 | 384 个 `.o` 按「文件内容 + 参数」做键缓存，同版本重编 334s → 61s |
+
+## 体积与结构
+
+APK 约 **76 MB**，首次启动把工具链解到 app 私有目录（2860 个文件，约 1.3 秒）。
+
+```
+lib/arm64-v8a/
+  libclang.so      118 KB   clang 驱动
+  ld.lld           5.6 MB   链接器（名字必须是 ld.lld，它按 argv[0] 选驱动模式）
+  libpython.so     4.5 KB   CPython 解释器
+  llvm-strip       205 KB   llvm-objcopy 的软链名，用于 strip 产物
+assets/
+  tc.zip            72 MB   libLLVM / libclang-cpp / libc++_shared / libffi / libxml2 /
+                            libiconv / libz / libzstd + clang 头与 builtins + Python 标准库
+                            + sysroot（crt*.o、libunwind.a、libatomic.a、C 头文件）
+  build_android.py        编译脚本，每次启动覆盖写入私有目录
+  www/                    界面
+```
+
+**为什么可执行文件要放在 `lib/arm64-v8a/`**：Android 10 起禁止从 app 数据目录
+`execve`（W^X），`chmod 755` 也无效；而 `nativeLibraryDir` 允许执行。实测
+`filesDir` 里的 ELF 报 `error=13, Permission denied`，同一文件放进 APK 的
+`lib/arm64-v8a/` 后可以正常跑起来。
 
 ## 构建
 
-无需 Gradle / Android Studio，只用到 JDK + build-tools + platform：
-
 ```bash
-python tools/make_icons.py     # 生成各密度图标（纯标准库）
-python tools/build_apk.py      # aapt2 → javac → d8 → zipalign → apksigner
+python tools/pack_toolchain.py    # payload/tc 裁剪 → jniLibs + assets/tc.zip
+python tools/build_apk.py         # aapt2 → javac → d8 → zipalign → apksigner
 ```
 
-产物在 `dist/MHGU-Manager-v0.1.0.apk`。
+无 Gradle、无 Android Studio。依赖 JDK 21、build-tools r34（aapt2 / zipalign / d8 / apksigner）。
 
-工具链路径写在 `tools/build_apk.py` 顶部，按自己的机器改：
-`JDK`、`BT`（build-tools r34）、`ANDROID_JAR`（platform-34）。
+## 两个必须知道的坑
 
-首跑会自动生成签名密钥到 `build/keystore/`，**这个目录不要提交**，丢了就没法覆盖升级。
+**1. d8（R8 8.2.2）遇到某些内部类会抛 NPE**
+`NullPointerException: Cannot invoke "String.length()" because "<parameter1>" is null`。
+触发条件是**非静态内部类、匿名类**，以及**实现了 `Comparator` 的静态嵌套类**（桥接方法
+`compare(Object,Object)` 同样会崩）。规避方式：所有嵌套类写成 `static`，不要用匿名类，
+排序自己手写，不要实现 `Comparator`。
 
-## 一个必须知道的坑：d8 与非静态内部类
+**2. `string.h` 找不到**
+clang 的 `-resource-dir` 只提供编译器自带头（`stdint.h`、`arm_neon.h` 等），
+C 标准库头属于 sysroot。必须把 `${PREFIX}/include` 里的 C 头一起带上，并用
+`--sysroot=` 指向它；`libc.so` / `libm.so` / `libdl.so` 直接用系统的 `/system/lib64`。
 
-build-tools r34 自带的 **d8（R8 8.2.2）处理非静态内部类会崩**：
+## 编译流程
 
 ```
-Error in MainActivity$Bridge.class:
-java.lang.NullPointerException: Cannot invoke "String.length()" because "<parameter1>" is null
+python build_android.py <游戏目录>
+  --clang <nativeLibraryDir>/libclang.so
+  --lld   <nativeLibraryDir>/ld.lld
+  --sysroot <filesDir>/tc/sysroot
+  --resource-dir <filesDir>/tc/clang/21
+  --gu <filesDir>/src/gu-native
 ```
 
-用最小样例验证过：静态嵌套类正常，非静态内部类（带 `this$0`）必崩。匿名类也一样。
+1. `gen.py` 把 `exefs/sdk` 与 `exefs/main` 的 ARM 代码翻成 C（两个进程并行）
+2. clang 编译 384 个 C 文件（按核数并行，命中缓存的对象直接复制）
+3. lld 链接 → `llvm-strip --strip-unneeded` → 写入游戏目录
 
-所以本工程所有嵌套类都是 `static`，需要外部能力就显式传 `Activity`。
-改动时**不要**图省事写 `private class Foo` 或 `new Runnable(){...}`。
-
-## 前端
-
-`app/www` 是纯静态页面，`assets/www` 首次启动同步到 `filesDir/www`（跳过 `_` 开头目录），
-之后从可写目录加载，方便后续做增量更新。
-
-Java 侧通过 `App` 对象暴露能力，JS 侧用 `window.__onRelease` / `window.__onDownload` 接收回调。
-注意 JS 桥方法跑在 JavaBridge 线程，网络请求都在 `Thread` 里做完再 `evaluateJavascript` 回推。
-
-## 关于「手机本地编译 so」
-
-上游 `build_game.py` 只认 Windows / Linux 的 **x86_64** 宿主：Android 上 `platform.system()`
-返回 `Linux`，它会去 `prebuilt/linux-x86_64/bin` 找 clang，而那里面全是 x86 ELF，执行即
-`cannot execute`。NDK 本身也不提供 android-aarch64 宿主工具链（只有 windows-x86_64 /
-linux-x86_64 / darwin-x86_64 / darwin-arm64）。
-
-但 aarch64 宿主的编译器是存在的：**Termux 的 clang**（LLVM 原生 aarch64，target 默认
-`aarch64-linux-android`），以及 `lzhiyong/termux-ndk`（整套 NDK 的 aarch64 重建版）。
-
-因此本工程提供 **`tools/build_android.py`**：与上游做同一件事，只换工具链。
-`ID_FILES` / `ID_FLAGS` / `CFLAGS` 与链接参数全部照抄上游，保证 `gamelib_id()`
-算出的 id 与 app 期望的一致——否则 app 会以 `libmhgugame.so is from another version` 拒绝加载。
-
-```bash
-# Termux 里
-pkg install -y python clang lz4 unzip
-git clone https://github.com/khorne-hub/gu-native   # 或下 zip
-curl -sL https://raw.githubusercontent.com/biigdrong/mhgu-tool/main/app/tools/build_android.py \
-     -o ~/gu-native/tools/build_android.py
-python ~/gu-native/tools/build_android.py /sdcard/MHGU --jobs 6
-```
-
-app 里的「交给 Termux 编译」就是把上面这段通过 `RunCommandService` 送过去，依赖会自己装。
-
-**状态说明**：脚本逻辑与上游逐项对齐，但**尚未在真机上完整跑通一次**（手机当时离线）。
-第一次用请留观，尤其是 `gen.py` 阶段的耗时与内存峰值；失败时把 Termux 的输出发出来。
-有电脑的话仍建议走 `mhgu-tool`，那边路径更短、参数已实测。
-
-实测成本参考：PC 6 分钟；手机预计 40–70 分钟，峰值约 3 GB 空间。
-
+实测（SD 8 Gen 5 / 8 核 / Android 17）：首次 334 秒，命中缓存 61 秒，产物
+113,404,080 字节，`game code id = 3bfb26af6be34249`，与 PC 端逐字节一致。

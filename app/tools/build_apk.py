@@ -62,6 +62,14 @@ def prepare_assets():
         shutil.rmtree(dst, ignore_errors=True)
     shutil.copytree(os.path.join(APP, "www"), dst)
     print("  assets/www:", len(os.listdir(dst)), "个文件")
+    shutil.copyfile(os.path.join(ROOT, "tools", "build_android.py"),
+                    os.path.join(APKDIR, "assets", "build_android.py"))
+    tcz = os.path.join(ROOT, "payload", "tc.zip")
+    if os.path.isfile(tcz):
+        shutil.copyfile(tcz, os.path.join(APKDIR, "assets", "tc.zip"))
+        print("  assets/tc.zip: %.1f MB" % (os.path.getsize(tcz) / 1048576))
+    else:
+        print("  assets/tc.zip: 缺（内置工具链不完整，编译不可用）")
 
 
 def ensure_keystore():
@@ -136,6 +144,19 @@ def main():
             ct = zipfile.ZIP_STORED if item.filename == "resources.arsc" else zipfile.ZIP_DEFLATED
             zout.writestr(item, zin.read(item.filename), compress_type=ct)
         zout.write(dex, "classes.dex", compress_type=zipfile.ZIP_DEFLATED)
+        # 原生库：以 lib/arm64-v8a/libX.so 形式打包，安装后落到 nativeLibraryDir（可执行）
+        jni = os.path.join(APP, "android", "jniLibs")
+        if os.path.isdir(jni):
+            abi_dirs = sorted(os.listdir(jni))
+            for abi in abi_dirs:
+                d = os.path.join(jni, abi)
+                if not os.path.isdir(d):
+                    continue
+                for fn in sorted(os.listdir(d)):
+                    p = os.path.join(d, fn)
+                    if os.path.isfile(p):
+                        zout.write(p, "lib/%s/%s" % (abi, fn), compress_type=zipfile.ZIP_STORED)
+                        print("     + lib/%s/%s  %.2f MB" % (abi, fn, os.path.getsize(p) / 1048576))
 
     print("[7/7] 对齐 + 签名")
     aligned = os.path.join(APKDIR, "aligned.apk")
