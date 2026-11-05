@@ -75,31 +75,34 @@
 
 <!-- ==================== so 编译 ==================== -->
 <div class="card hide" id="cardBuild">
-  <div class="title"><b>游戏代码（so）</b><span class="badge warn">手机上编译</span></div>
-  <div class="desc">触屏版的 so 必须用你自己的游戏文件生成，不能用别人的。同一版本可一直复用，只有 gu-native 换版本时才需要重做。</div>
+  <div class="title"><b>游戏代码（so）</b><span class="badge" id="bBadge">未开始</span></div>
+  <div class="desc">用你自己的 exefs 生成。编译交给 Termux 在它自己的权限下跑，产物直接写回游戏文件夹，不用中转。</div>
   <div class="kv"><span>so 状态</span><span id="bSo">—</span></div>
   <div class="kv"><span>Termux</span><span id="bTermux">—</span></div>
+  <div class="kv"><span>当前阶段</span><span id="bStage">—</span></div>
+  <div class="prog"><i id="bBar"></i></div>
   <div class="btns">
-    <button class="pri" onclick="runTermux()">交给 Termux 编译</button>
-    <button class="ghost" onclick="copyScript()">复制脚本</button>
+    <button class="pri" id="bBtn" onclick="startBuild()">开始编译</button>
+    <button class="ghost" onclick="showLog()">看日志</button>
   </div>
+  <pre id="bLog" style="display:none;margin-top:10px"></pre>
   <div class="hint">
-    <b style="color:#d69b45">先说清代价：</b>手机编译要把 exefs 翻成 C 再用 clang 编译，PC 上是 6 分钟，
-    手机上通常 40–70 分钟，峰值约需 3 GB 空间，会明显发热。脚本已加 <code>termux-wake-lock</code>，
-    编译期间别锁屏。<br>
-    如果你有电脑，用 <code>mhgu-tool</code> 编一次再把 so 拷过来更快：那边用 NDK 的 x86_64 宿主工具链，
-    手机这边用 Termux 的 aarch64 宿主 clang，两条路产出的 so 等价。
+    <b style="color:#d69b45">代价先说清：</b>把 exefs 翻成 C 再编译，PC 上 6 分钟，这台手机实测也是 <b>6 分钟</b>
+    （384 个 C 文件、6 并行）。峰值约 3 GB 空间，会明显发热。<br>
+    已经是同版本的 so 会直接跳过，不重复编。
   </div>
   <details style="margin-top:12px">
-    <summary style="cursor:pointer;color:#e0bb63;font-size:13.5px">Termux 准备步骤（点开）</summary>
+    <summary style="cursor:pointer;color:#e0bb63;font-size:13.5px">首次准备：允许外部调用 Termux（点开）</summary>
     <div class="hint" style="margin-top:8px">
-      1. 装 Termux（F-Droid 版，不要用 Play 商店的旧版）<br>
-      2. 新建 <code>~/.termux/termux.properties</code>，写入 <code>allow-external-apps=true</code>，再执行 <code>termux-reload-settings</code><br>
-      3. 回到这里点「交给 Termux 编译」，依赖（python / clang / lz4 / unzip）脚本会自己装<br>
-      4. 编译产物直接写到 <code>/sdcard/MHGU</code>，回来刷新即可看到
+      Termux 默认不让别的应用调它的命令服务，要开一次：<br>
+      1. 点下面的按钮复制命令<br>
+      2. 打开 Termux，长按屏幕选 Paste，回车<br>
+      3. 回来点「开始编译」，依赖（python / clang / lz4 / unzip）脚本会自己装
+      <div class="btns" style="margin-top:8px">
+        <button class="ghost" onclick="copyTermuxPrep()">复制准备命令</button>
+      </div>
     </div>
   </details>
-  <pre id="scriptBox" style="display:none;margin-top:10px"></pre>
 </div>
 
 <div class="warnbox">
@@ -253,35 +256,53 @@ window.__onDownload = function(r){
   }
 };
 
-/* ---------------- Termux 编译 ---------------- */
-function buildScript(){
-  return [
-    "set -e",
-    "echo '== MHGU so 编译开始 =='",
-    "pkg install -y python clang lz4 unzip",
-    "termux-wake-lock",
-    "python -c 'import lz4' 2>/dev/null || pip install --quiet lz4",
-    "if [ ! -d ~/gu-native ]; then",
-    "  cd ~ && curl -sLO https://github.com/khorne-hub/gu-native/archive/refs/heads/main.zip",
-    "  unzip -oq main.zip && mv gu-native-main gu-native && rm -f main.zip",
-    "fi",
-    "curl -sL https://raw.githubusercontent.com/biigdrong/mhgu-tool/main/app/tools/build_android.py -o ~/gu-native/tools/build_android.py",
-    "cd ~/gu-native",
-    "python tools/build_android.py " + (window.__gameDir || "/sdcard/111/MHGU") + " --jobs 6",
-    "termux-wake-unlock",
-    "echo '== 完成，回到管家刷新 so 状态 =='"
-  ].join("\n");
+/* ---------------- 编译（Termux 正常域 + 状态文件轮询） ---------------- */
+var buildTimer = null;
+
+function startBuild(){
+  try { App.buildSo(); } catch(e) { alert("桥未就绪：" + e); return; }
+  $("bLog").style.display = "none";
+  $("bBtn").disabled = true;
+  $("bBadge").className = "badge warn";
+  $("bBadge").textContent = "排队中";
+  if (buildTimer) clearInterval(buildTimer);
+  buildTimer = setInterval(pollBuild, 1500);
+  pollBuild();
 }
 
-function runTermux(){
-  App.runInTermux(buildScript());
+function pollBuild(){
+  var r;
+  try { r = JSON.parse(App.buildStatus()); } catch(e) { return; }
+  if (!r || !r.ok) return;
+  var s = r.state || {};
+  var pct = Math.max(0, Math.min(100, s.percent || 0));
+  $("bStage").textContent = (s.stage || "—") + "  " + pct + "%";
+  $("bBar").style.width = pct + "%";
+  var st = s.status || "idle";
+  var map = { idle:["", "未开始"], running:["warn", "进行中"], done:["ok", "已完成"], failed:["bad", "失败"] };
+  var m = map[st] || ["", st];
+  $("bBadge").className = "badge " + m[0];
+  $("bBadge").textContent = m[1];
+  if (r.soMB) $("bSo").innerHTML = '<span style="color:#4ea87a">' + r.soMB + ' MB</span>';
+  if (st === "done" || st === "failed") {
+    clearInterval(buildTimer); buildTimer = null;
+    $("bBtn").disabled = false;
+    refreshGameDir();
+    if (st === "failed") showLog();
+  }
 }
 
-function copyScript(){
-  var s = buildScript();
-  $("scriptBox").style.display = "block";
-  $("scriptBox").textContent = s;
-  App.copyToClipboard(s);
+function showLog(){
+  try {
+    var s = App.buildLog();
+    $("bLog").textContent = s || "(还没有日志，先点开始编译)";
+    $("bLog").style.display = "block";
+  } catch(e) {}
+}
+
+function copyTermuxPrep(){
+  var cmd = "mkdir -p ~/.termux && (grep -q allow-external-apps ~/.termux/termux.properties 2>/dev/null || echo allow-external-apps=true >> ~/.termux/termux.properties); termux-reload-settings; echo READY";
+  try { App.copyToClipboard(cmd); } catch(e) { alert("复制失败：" + e); }
 }
 
 var ZH_OFFICIAL = "本版要点（中文摘要）：安卓端新增两种取文件方式——把文件导入 app 私有目录，或直接读取你选的文件夹（SD 卡、U 盘都行，不占双份空间）；新增 Android 设置页，可导入导出存档、单独指定存档目录、导入 mod 压缩包、随时更换游戏文件夹；崩溃时可直接分享 log.txt；容错 Linux 下 Yuzu 解出的大写 NativeNX 目录；mod 支持只替换 .arc 里的部分条目；新增 Android TV / Shield TV 支持。";

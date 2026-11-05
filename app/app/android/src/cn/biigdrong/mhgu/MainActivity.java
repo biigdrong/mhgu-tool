@@ -329,6 +329,192 @@ public class MainActivity extends Activity {
         super.onActivityResult(req, res, data);
     }
 
+    private void runTermuxFile(String path) {
+        Intent i = new Intent();
+        i.setClassName("com.termux", "com.termux.app.RunCommandService");
+        i.setAction("com.termux.RUN_COMMAND");
+        i.putExtra("com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash");
+        i.putExtra("com.termux.RUN_COMMAND_ARGUMENTS", new String[]{path});
+        i.putExtra("com.termux.RUN_COMMAND_WORKDIR", "/data/data/com.termux/files/home");
+        i.putExtra("com.termux.RUN_COMMAND_BACKGROUND", true);
+        startService(i);
+    }
+
+    private static String readAll(File f) {
+        try {
+            byte[] b = new byte[(int) Math.min(262144, f.length())];
+            FileInputStream in = new FileInputStream(f);
+            int n = in.read(b);
+            in.close();
+            return new String(b, 0, Math.max(0, n), "UTF-8");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** 生成 run.sh：源码与脚本由 App 下载解压好，Termux 只负责编译 */
+    static String buildScript(String gameDir) {
+        StringBuilder b = new StringBuilder();
+        b.append("#!/data/data/com.termux/files/usr/bin/bash\n");
+        b.append("G=\"").append(gameDir).append("\"\n");
+        b.append("B=\"$G/_build\"\n");
+        b.append("GU=\"$B/src/gu-native\"\n");
+        b.append("mkdir -p \"$B\"\n");
+        b.append("export PREFIX=/data/data/com.termux/files/usr\n");
+        b.append("export PATH=$PREFIX/bin:/system/bin\n");
+        b.append("export HOME=/data/data/com.termux/files/home\n");
+        b.append("export TMPDIR=$PREFIX/tmp\n");
+        b.append("mkdir -p \"$TMPDIR\"; chmod 700 \"$TMPDIR\" 2>/dev/null\n");
+        b.append("st() { printf '{\"stage\":\"%s\",\"percent\":%s,\"status\":\"%s\"}' \"$1\" \"$2\" \"$3\" > \"$B/status.tmp\" && mv -f \"$B/status.tmp\" \"$B/status.json\"; }\n");
+        b.append("st \"安装依赖\" 20 running\n");
+        b.append("pkg install -y python clang lz4 >\"$B/pkg.log\" 2>&1\n");
+        b.append("termux-wake-lock 2>/dev/null\n");
+        b.append("st \"编译中\" 25 running\n");
+        b.append("cd \"$GU\" || { st \"源码缺失\" 0 failed; exit 1; }\n");
+        b.append("python tools/build_android.py \"$G\" --jobs 6 2>&1 | tee -a \"$B/build.log\" | while IFS= read -r ln; do\n");
+        b.append("  case \"$ln\" in\n");
+        b.append("    *\"阶段 1/3\"*) st \"翻译 ARM 到 C\" 30 running ;;\n");
+        b.append("    *\"阶段 2/3\"*) st \"编译 C\" 45 running ;;\n");
+        b.append("    *\"阶段 3/3\"*) st \"链接\" 93 running ;;\n");
+        b.append("    *\"已有同版本\"*) st \"已是最新版本\" 100 done ;;\n");
+        b.append("    *\"完成，用时\"*) st \"完成\" 100 done ;;\n");
+        b.append("  esac\n");
+        b.append("  case \"$ln\" in\n");
+        b.append("    *\"/ \"*) n=$(printf '%s' \"$ln\" | tr -d ' ' | cut -d/ -f1); case \"$n\" in ''|*[!0-9]*) ;; *) st \"编译 C\" $((45 + n * 45 / 384)) running ;; esac ;;\n");
+        b.append("  esac\n");
+        b.append("done\n");
+        b.append("termux-wake-unlock 2>/dev/null\n");
+        b.append("if [ -f \"$G/libmhgugame.so\" ]; then st \"完成\" 100 done; else st \"失败，看日志\" 100 failed; fi\n");
+        return b.toString();
+    }
+
+    /** 写一个最小 status.json，供 App 轮询 */
+    private void setStage(File buildDir, String stage, int pct, String status) {
+        try {
+            String js = "{\"stage\":" + quote(stage) + ",\"percent\":" + pct
+                    + ",\"status\":" + quote(status) + "}";
+            File tmp = new File(buildDir, "status.tmp");
+            FileOutputStream fos = new FileOutputStream(tmp);
+            fos.write(js.getBytes("UTF-8"));
+            fos.close();
+            tmp.renameTo(new File(buildDir, "status.json"));
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 用系统 HttpURLConnection 下载，不依赖 Termux 的 curl */
+    private void httpDownload(String url, File dest) throws IOException {
+        File parent = dest.getParentFile();
+        if (parent != null && !parent.exists()) parent.mkdirs();
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setConnectTimeout(20000);
+        c.setReadTimeout(60000);
+        c.setInstanceFollowRedirects(true);
+        c.setRequestProperty("User-Agent", "mhgu-app/0.1.0");
+        try {
+            int code = c.getResponseCode();
+            if (code >= 400) throw new IOException("HTTP " + code);
+            InputStream in = c.getInputStream();
+            FileOutputStream out = new FileOutputStream(dest);
+            byte[] buf = new byte[128 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            out.close();
+            in.close();
+        } finally {
+            c.disconnect();
+        }
+    }
+
+    /** 用系统 java.util.zip 解压，不依赖 Termux 的 unzip */
+    private void unzipTo(File zip, File destDir) throws IOException {
+        java.util.zip.ZipFile zf = new java.util.zip.ZipFile(zip);
+        try {
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
+            while (en.hasMoreElements()) {
+                java.util.zip.ZipEntry e = en.nextElement();
+                File out = new File(destDir, e.getName());
+                if (e.isDirectory()) {
+                    out.mkdirs();
+                    continue;
+                }
+                File p = out.getParentFile();
+                if (p != null && !p.exists()) p.mkdirs();
+                InputStream in = zf.getInputStream(e);
+                FileOutputStream fos = new FileOutputStream(out);
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
+                fos.close();
+                in.close();
+            }
+        } finally {
+            zf.close();
+        }
+    }
+
+    private static void writeText(File f, String s) throws IOException {
+        File p = f.getParentFile();
+        if (p != null && !p.exists()) p.mkdirs();
+        FileOutputStream fos = new FileOutputStream(f);
+        fos.write(s.getBytes("UTF-8"));
+        fos.close();
+    }
+
+    /** 下载源码与脚本并解压，然后交给 Termux */
+    void doPrepare(String dir) {
+        File bd = new File(dir, "_build");
+        File src = new File(bd, "src");
+        File gu = new File(src, "gu-native");
+        try {
+            if (!new File(gu, "tools/gen.py").isFile()) {
+                setStage(bd, "下载源码", 4, "running");
+                src.mkdirs();
+                File zip = new File(bd, "gu.zip");
+                httpDownload("https://github.com/khorne-hub/gu-native/archive/refs/heads/main.zip", zip);
+                setStage(bd, "解压源码", 12, "running");
+                unzipTo(zip, src);
+                File inner = new File(src, "gu-native-main");
+                if (inner.isDirectory()) {
+                    if (gu.exists()) deleteTree(gu);
+                    inner.renameTo(gu);
+                }
+                zip.delete();
+            }
+            setStage(bd, "准备编译脚本", 16, "running");
+            File py = new File(gu, "tools/build_android.py");
+            httpDownload("https://raw.githubusercontent.com/biigdrong/mhgu-tool/main/app/tools/build_android.py", py);
+            File sh = new File(bd, "run.sh");
+            writeText(sh, buildScript(dir));
+            setStage(bd, "启动 Termux 编译", 18, "running");
+            runTermuxFile(sh.getAbsolutePath());
+        } catch (Exception e) {
+            setStage(bd, "准备失败：" + e.getMessage(), 0, "failed");
+        }
+    }
+
+    private static void deleteTree(File f) {
+        File[] kids = f.listFiles();
+        if (kids != null) {
+            for (File k : kids) deleteTree(k);
+        }
+        f.delete();
+    }
+
+    private static class PrepJob implements Runnable {
+        private final MainActivity act;
+        private final String dir;
+
+        PrepJob(MainActivity a, String d) {
+            this.act = a;
+            this.dir = d;
+        }
+
+        public void run() {
+            act.doPrepare(dir);
+        }
+    }
+
     // ================================================================ 能力
 
     private boolean routeUrl(String url) {
@@ -591,6 +777,66 @@ public class MainActivity extends Activity {
                 return;
             }
             act.openTreePicker();
+        }
+
+        /** 写 run.sh 交给 Termux 执行；进度由 status.json 回传，不走 run-as */
+        @JavascriptInterface
+        public void buildSo() {
+            try {
+                String dir = act.sp.getString("gameDir", GAME_DIR);
+                File g = new File(dir);
+                if (!new File(g, "exefs/main").isFile()) {
+                    toast("这个文件夹没有 exefs/main，先选对目录");
+                    return;
+                }
+                if (!hasTermux()) {
+                    toast("没装 Termux，无法编译");
+                    return;
+                }
+                File bd = new File(g, "_build");
+                if (!bd.exists() && !bd.mkdirs()) {
+                    toast("写不了 " + bd.getAbsolutePath() + "，检查「所有文件访问权限」");
+                    return;
+                }
+                new File(bd, "status.json").delete();
+                new File(bd, "build.log").delete();
+                act.setStage(bd, "准备源码", 2, "running");
+                new Thread(new PrepJob(act, dir)).start();
+                toast("开始准备并编译，进度会自动刷新");
+            } catch (Exception e) {
+                toast("启动编译失败：" + e.getMessage());
+            }
+        }
+
+        @JavascriptInterface
+        public String buildStatus() {
+            try {
+                String dir = act.sp.getString("gameDir", GAME_DIR);
+                File st = new File(new File(dir, "_build"), "status.json");
+                String body = st.isFile() ? readAll(st).trim() : "";
+                if (body.isEmpty()) {
+                    body = "{\"stage\":\"未开始\",\"percent\":0,\"status\":\"idle\"}";
+                }
+                File so = new File(dir, "libmhgugame.so");
+                return "{\"ok\":true,\"dir\":" + quote(dir)
+                        + ",\"soMB\":" + (so.isFile() ? so.length() / 1048576 : 0)
+                        + ",\"state\":" + body + "}";
+            } catch (Exception e) {
+                return "{\"ok\":false,\"error\":" + quote(e.toString()) + "}";
+            }
+        }
+
+        @JavascriptInterface
+        public String buildLog() {
+            try {
+                String dir = act.sp.getString("gameDir", GAME_DIR);
+                File lg = new File(new File(dir, "_build"), "build.log");
+                if (!lg.isFile()) return "";
+                String s = readAll(lg);
+                return s.length() > 8000 ? s.substring(s.length() - 8000) : s;
+            } catch (Exception e) {
+                return "";
+            }
         }
 
         @JavascriptInterface
