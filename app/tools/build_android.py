@@ -118,29 +118,44 @@ def find_tool(name):
     return None
 
 
-def prune_cache(cache_dir, keep=1000 * 1024 * 1024, limit=1200 * 1024 * 1024):
-    """缓存超过上限时按最旧优先删，避免无限增长"""
+def prune_cache(root, keep, keep_buckets=3):
+    """按版本桶回收：只删旧版本的桶，当前版本（keep）永不删。
+
+    这样「清完了还能比对」：同一版本再次编译时对象仍在，只是旧版本被回收。
+    另外顺手清掉中断留下的 *.tmp。
+    """
     try:
-        entries = []
-        total = 0
-        for n in os.listdir(cache_dir):
-            if not n.endswith(".o"):
+        buckets = []
+        for n in os.listdir(root):
+            p = os.path.join(root, n)
+            if not os.path.isdir(p) or n == keep:
                 continue
-            p = os.path.join(cache_dir, n)
-            st = os.stat(p)
-            entries.append((st.st_mtime, st.st_size, p))
-            total += st.st_size
-        if total <= limit:
-            return
-        entries.sort()
-        for _m, sz, p in entries:
-            if total <= keep:
-                break
             try:
-                os.remove(p)
-                total -= sz
+                buckets.append((os.path.getmtime(p), p))
             except OSError:
                 pass
+        buckets.sort(reverse=True)
+        for _m, p in buckets[keep_buckets - 1:]:
+            shutil.rmtree(p, ignore_errors=True)
+    except OSError:
+        pass
+    try:
+        for n in os.listdir(root):
+            p = os.path.join(root, n)
+            # .tmp 是中断残留；根目录下的散装 .o 是旧版平铺布局，一并清掉
+            if os.path.isfile(p) and (n.endswith(".tmp") or n.endswith(".o")):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+        cur = os.path.join(root, keep)
+        if os.path.isdir(cur):
+            for n in os.listdir(cur):
+                if n.endswith(".tmp"):
+                    try:
+                        os.remove(os.path.join(cur, n))
+                    except OSError:
+                        pass
     except OSError:
         pass
 
@@ -281,7 +296,8 @@ def main():
 
     # 对象缓存：文件内容 + 编译参数决定键（gid 只并进真正引用它的文件），
     # 上游只改少数文件时其余 .o 直接复用，不必全量重编。
-    cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "mhgu_obj")
+    cache_root = os.path.join(os.path.expanduser("~"), ".cache", "mhgu_obj")
+    cache_dir = os.path.join(cache_root, gid)
     try:
         os.makedirs(cache_dir, exist_ok=True)
     except OSError:
@@ -292,11 +308,10 @@ def main():
     clang_ver = (_v.splitlines()[0] if _v else "") + "|" + str(a.api)
 
     def obj_key(data):
+        # 桶已经按 gid 隔离，键只由内容与参数决定
         h = hashlib.sha256()
         h.update(data)
         h.update(base_flags.encode("utf-8", "replace"))
-        if b"GAMELIB_ID" in data:
-            h.update(('-DGAMELIB_ID="%s"' % gid).encode())
         h.update(clang_ver.encode())
         return h.hexdigest()
 
@@ -385,7 +400,7 @@ def main():
     say("\n产物已写入游戏文件夹，打开触屏版即可。")
     if cache_dir:
         say("复用对象：%d / %d" % (hits[0], len(sources)))
-        prune_cache(cache_dir)
+        prune_cache(cache_root, keep=gid)
     shutil.rmtree(work, ignore_errors=True)
 
 

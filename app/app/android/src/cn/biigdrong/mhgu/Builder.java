@@ -211,6 +211,7 @@ public final class Builder {
                 }
                 log("工具链就绪 " + elog.toString().trim());
 
+                sweepStale(ctx);
                 ensureScript(ctx);
                 ensureSource(ctx, false, true);
 
@@ -351,6 +352,24 @@ public final class Builder {
         }
         z.close();
         return files;
+    }
+
+    /** 清掉上次被强杀留下的工作目录；正常结束的由脚本自己删 */
+    static void sweepStale(Context c) {
+        File base = c.getFilesDir();
+        File[] kids = base.listFiles();
+        if (kids != null) {
+            for (File f : kids) {
+                if (f.isDirectory() && f.getName().startsWith("mhgu_")) {
+                    log("清理残留工作目录 " + f.getName());
+                    deleteTree(f);
+                }
+            }
+        }
+        File src = new File(base, "src");
+        deleteTree(new File(src, "unzip"));
+        File zip = new File(src, "gu.zip");
+        if (zip.isFile()) zip.delete();
     }
 
     static void deleteTree(File f) {
