@@ -62,6 +62,28 @@ def find_root(explicit):
     fail("找不到 gu-native 源码。用 --gu 指定，或先 git clone 到 ~/gu-native")
 
 
+def load_upstream(root):
+    """动态加载上游 tools/build_game.py。
+
+    为什么要这么做：gamelib_id() 的输入（文件清单 + ID_FLAGS）一旦上游改动，
+    硬编码在本脚本里的副本就会算出不同的 id，app 会以版本不符拒绝加载。
+    直接复用上游的常量与函数，上游怎么更新都不用改这里。
+    """
+    import importlib.util
+    p = os.path.join(root, "tools", "build_game.py")
+    if not os.path.isfile(p):
+        say("提示：上游没有 tools/build_game.py，用内置默认参数")
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("mhgu_upstream", p)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception as e:  # noqa: BLE001
+        say("警告：加载上游 build_game.py 失败（%s），改用内置默认参数" % e)
+        return None
+
+
 def gamelib_id(root):
     h = hashlib.sha256()
     for name in ID_FILES:
@@ -85,7 +107,7 @@ def check_game(game):
     if head[:4] != b"NSO0" or head[0x40:0x48] != BUILD_ID:
         fail("exefs 不是 1.4.0 版本（build ID 应为 %s）。" % BUILD_ID.hex().upper())
     if not os.path.isdir(os.path.join(game, "romfs", "nativeNX")):
-        fail("缺 romfs/nativeNX。游戏资源没解全。")
+        say("提示：缺 romfs/nativeNX —— 不影响编译，但游戏运行时需要它。")
 
 
 def find_tool(name):
@@ -108,6 +130,7 @@ def main():
     ap.add_argument("--gu")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     ap.add_argument("--api", type=int, default=29)
+    ap.add_argument("--force", action="store_true", help="已有同版本 so 也重建")
     a = ap.parse_args()
 
     game = os.path.abspath(a.game)
@@ -133,8 +156,36 @@ def main():
         subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "lz4"])
 
     check_game(game)
-    gid = gamelib_id(root)
+
+    up = load_upstream(root)
+    cflags = CFLAGS
+    if up is not None and hasattr(up, "gamelib_id"):
+        try:
+            gid = up.gamelib_id()
+            cflags = list(getattr(up, "CFLAGS", CFLAGS))
+            say("参数来源：上游 build_game.py（自适应，上游更新无需改本脚本）")
+        except Exception as e:  # noqa: BLE001
+            say("上游 gamelib_id() 失败（%s），退回内置算法" % e)
+            gid = gamelib_id(root)
+    else:
+        gid = gamelib_id(root)
+        say("参数来源：本脚本内置默认值")
     say("game code id: " + gid)
+
+    dst_so = os.path.join(game, "libmhgugame.so")
+    dst_id = os.path.join(game, "libmhgugame.id")
+    if not a.force and os.path.isfile(dst_so) and os.path.isfile(dst_id):
+        try:
+            old = open(dst_id).read().strip()
+        except OSError:
+            old = ""
+        if old == gid and os.path.getsize(dst_so) > 10 * 1024 * 1024:
+            say("已有同版本的 so（id %s，%d MB），跳过编译。" %
+                (gid, os.path.getsize(dst_so) >> 20))
+            say("要强制重建请加 --force")
+            return
+        if old:
+            say("已有 so 的 id 是 %s，与本版源码算出的 %s 不同，需要重建。" % (old, gid))
 
     t0 = time.time()
     work = tempfile.mkdtemp(prefix="mhgu_", dir=os.path.expanduser("~"))
@@ -177,8 +228,8 @@ def main():
     def build(item):
         i, src = item
         obj = os.path.join(objdir, "%d.o" % i)
-        cmd = [clang, target] + CFLAGS + ["-I" + os.path.join(root, "runtime"),
-                                          '-DGAMELIB_ID="%s"' % gid, "-c", src, "-o", obj]
+        cmd = [clang, target] + cflags + ["-I" + os.path.join(root, "runtime"),
+                                         '-DGAMELIB_ID="%s"' % gid, "-c", src, "-o", obj]
         code, out = run(cmd)
         if code:
             raise RuntimeError("%s:\n%s" % (src, out[-1500:]))

@@ -15,6 +15,9 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.StatFs;
+import android.content.SharedPreferences;
+import android.provider.DocumentsContract;
+import android.provider.Settings;
 import android.view.KeyEvent;
 import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
@@ -53,14 +56,19 @@ public class MainActivity extends Activity {
     public static final String PKG_TOUCH = "com.mhgu.recomp";
     public static final String REPO_OFFICIAL = "morerokk/MHGURecomp";
     public static final String REPO_TOUCH = "khorne-hub/gu-native";
-    public static final String GAME_DIR = "/sdcard/MHGU";
+    public static final String GAME_DIR = "/sdcard/111/MHGU";
+
+    private static final int REQ_TREE = 1001;
+    private static final int REQ_ALLFILES = 1002;
 
     private WebView web;
     private final Handler ui = new Handler(Looper.getMainLooper());
+    private SharedPreferences sp;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        sp = getSharedPreferences("mhgu", MODE_PRIVATE);
         web = new WebView(this);
         web.setBackgroundColor(0xFF0F1115);
         WebSettings s = web.getSettings();
@@ -240,6 +248,85 @@ public class MainActivity extends Activity {
                 Toast.makeText(act, "已复制", Toast.LENGTH_SHORT).show();
             }
         }
+    }
+
+    // ================================================================ 选游戏文件夹
+
+    private boolean hasAllFiles() {
+        return Build.VERSION.SDK_INT < 30 || Environment.isExternalStorageManager();
+    }
+
+    private void askAllFiles() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                Intent i = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:" + getPackageName()));
+                startActivityForResult(i, REQ_ALLFILES);
+                return;
+            } catch (Exception ignored) {
+            }
+        }
+        toastNow("这个系统版本无法授予目录权限");
+    }
+
+    private void openTreePicker() {
+        try {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            startActivityForResult(i, REQ_TREE);
+        } catch (Exception e) {
+            toastNow("打不开文件夹选择器：" + e.getMessage());
+        }
+    }
+
+    private void toastNow(String m) {
+        ui.post(new ToastJob(this, m));
+    }
+
+    /** tree URI → 真实路径（"primary:111" → /storage/emulated/0/111） */
+    private String treeToPath(Uri tree) {
+        try {
+            String docId = DocumentsContract.getTreeDocumentId(tree);
+            String[] p = docId.split(":", 2);
+            if (p.length < 2) return null;
+            String vol = p[0];
+            String rel = p[1];
+            if ("primary".equalsIgnoreCase(vol)) {
+                return Environment.getExternalStorageDirectory().getAbsolutePath()
+                        + (rel.isEmpty() ? "" : "/" + rel);
+            }
+            return "/storage/" + vol + (rel.isEmpty() ? "" : "/" + rel);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        if (req == REQ_ALLFILES) {
+            if (hasAllFiles()) openTreePicker();
+            else toastNow("没有授予「所有文件访问权限」，读不了游戏文件夹");
+            return;
+        }
+        if (req == REQ_TREE) {
+            if (res != RESULT_OK || data == null || data.getData() == null) return;
+            Uri tree = data.getData();
+            try {
+                getContentResolver().takePersistableUriPermission(tree,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception ignored) {
+            }
+            String path = treeToPath(tree);
+            if (path == null) {
+                toastNow("解析不出真实路径，换一个文件夹再试");
+                return;
+            }
+            sp.edit().putString("gameDir", path).apply();
+            call("__onGameDir", "{\"ok\":true,\"path\":" + quote(path) + "}");
+            return;
+        }
+        super.onActivityResult(req, res, data);
     }
 
     // ================================================================ 能力
@@ -478,8 +565,12 @@ public class MainActivity extends Activity {
         public String gameDirState() {
             JSONObject o = new JSONObject();
             try {
-                File d = new File(GAME_DIR);
-                o.put("path", GAME_DIR);
+                boolean chosen = act.sp.contains("gameDir");
+                String dir = chosen ? act.sp.getString("gameDir", GAME_DIR) : GAME_DIR;
+                File d = new File(dir);
+                o.put("path", dir);
+                o.put("chosen", chosen);
+                o.put("allFiles", act.hasAllFiles());
                 o.put("exists", d.isDirectory());
                 o.put("exefs", new File(d, "exefs/main").isFile());
                 o.put("romfs", new File(d, "romfs/nativeNX").isDirectory());
@@ -491,6 +582,15 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {
             }
             return o.toString();
+        }
+
+        @JavascriptInterface
+        public void pickGameDir() {
+            if (!act.hasAllFiles()) {
+                act.askAllFiles();
+                return;
+            }
+            act.openTreePicker();
         }
 
         @JavascriptInterface

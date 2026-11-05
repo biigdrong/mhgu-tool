@@ -19,6 +19,20 @@
   <div class="tab" id="tabTouch" onclick="switchTab('touch')">触屏版</div>
 </div>
 
+<!-- ==================== 游戏文件夹 ==================== -->
+<div class="card" id="cardDir">
+  <div class="title"><b>游戏文件夹</b><span class="badge" id="dirBadge">未选</span></div>
+  <div class="desc">游戏资源放在哪个目录，由你指定。编译和启动都指向这里，APK 自身不带任何游戏文件。</div>
+  <div class="kv"><span>当前路径</span><span id="dirPath">—</span></div>
+  <div class="kv"><span>exefs</span><span id="dirExefs">—</span></div>
+  <div class="kv"><span>romfs</span><span id="dirRomfs">—</span></div>
+  <div class="kv"><span>libmhgugame.so</span><span id="dirSo">—</span></div>
+  <div class="btns">
+    <button class="pri" onclick="pickDir()">选择游戏文件夹</button>
+  </div>
+  <div class="hint">第一次会跳去授予「所有文件访问权限」，之后才能读到 <code>/sdcard/111</code> 这类目录。</div>
+</div>
+
 <!-- ==================== 官方版 ==================== -->
 <div class="card" id="cardOfficial">
   <div class="title"><b id="offTitle">官方版 MHGU Recomp</b><span class="badge" id="offBadge">检查中</span></div>
@@ -164,18 +178,31 @@ function refreshInstalled(){
 function refreshGameDir(){
   try {
     var g = JSON.parse(App.gameDirState());
-    var ok = g.exefs && g.romfs;
-    $("tchGameDir").innerHTML = g.exists
-      ? (ok ? '<span style="color:#4ea87a">完整</span>' : '<span style="color:#d69b45">不完整</span>')
-      : '<span style="color:#cf5c5c">没有</span> ' + g.path;
-    $("tchSo").innerHTML = g.so
-      ? '<span style="color:#4ea87a">已有 ' + g.soMB + ' MB</span>'
-      : '<span style="color:#cf5c5c">缺，需要生成</span>';
+    window.__gameDir = g.path || "/sdcard/111/MHGU";
+    var okAll = g.exefs && g.romfs && g.so;
+    $("dirPath").textContent = g.path || "—";
+    $("dirBadge").className = "badge " + (okAll ? "ok" : (g.chosen ? "warn" : ""));
+    $("dirBadge").textContent = okAll ? "完整" : (g.chosen ? "不完整" : "未选");
+    $("dirExefs").innerHTML = g.exefs ? '<span style="color:#4ea87a">有</span>' : '<span style="color:#cf5c5c">缺</span>';
+    $("dirRomfs").innerHTML = g.romfs ? '<span style="color:#4ea87a">有</span>' : '<span style="color:#cf5c5c">缺</span>';
+    $("dirSo").innerHTML = g.so ? '<span style="color:#4ea87a">' + g.soMB + ' MB</span>' : '<span style="color:#cf5c5c">缺，需要生成</span>';
+    $("tchGameDir").textContent = g.path || "—";
+    $("tchSo").innerHTML = g.so ? '<span style="color:#4ea87a">已有 ' + g.soMB + ' MB</span>' : '<span style="color:#cf5c5c">缺</span>';
     $("bSo").innerHTML = g.so
-      ? '<span style="color:#4ea87a">已有 ' + g.soMB + ' MB</span>' + (g.soId ? ' · id ' + g.soId : '')
+      ? '<span style="color:#4ea87a">' + g.soMB + ' MB</span>' + (g.soId ? ' · ' + g.soId : '')
       : '<span style="color:#cf5c5c">缺</span>';
   } catch(e) {}
 }
+
+function pickDir(){
+  try { App.pickGameDir(); } catch(e) { alert("桥未就绪：" + e); }
+}
+
+window.__onGameDir = function(r){
+  if (!r || !r.ok) return;
+  try { App.toast("已选定 " + r.path); } catch(e) {}
+  refreshGameDir();
+};
 
 /* ---------------- 版本查询 ---------------- */
 function checkRelease(k){
@@ -240,7 +267,7 @@ function buildScript(){
     "fi",
     "curl -sL https://raw.githubusercontent.com/biigdrong/mhgu-tool/main/app/tools/build_android.py -o ~/gu-native/tools/build_android.py",
     "cd ~/gu-native",
-    "python tools/build_android.py /sdcard/MHGU --jobs 6",
+    "python tools/build_android.py " + (window.__gameDir || "/sdcard/111/MHGU") + " --jobs 6",
     "termux-wake-unlock",
     "echo '== 完成，回到管家刷新 so 状态 =='"
   ].join("\n");
